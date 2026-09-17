@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -16,7 +16,9 @@ from backend.app.models import (
     Class,
     ClassEnrollment,
     ClassSession,
+    ConsentStatus,
     FaceTemplate,
+    SessionStatus,
     Student,
     User,
 )
@@ -25,8 +27,12 @@ from backend.app.schemas import (
     AttendanceBoardRead,
     AttendanceBoardRow,
     AttendanceRead,
+    AttendanceRequestCreate,
+    AttendanceRequestRead,
     ClassCreate,
     ClassRead,
+    FaceImportItem,
+    FaceImportResponse,
     FaceTemplateRead,
     FrameScanRequest,
     FrameScanResponse,
@@ -35,6 +41,7 @@ from backend.app.schemas import (
     SessionCreate,
     SessionPolicyUpdate,
     SessionRead,
+    StudentFaceSummary,
     StudentCreate,
     StudentRead,
     UserCreate,
@@ -45,6 +52,7 @@ from backend.app.security import (
     hash_password,
     require_admin,
     require_teacher_or_admin,
+    require_user_or_admin,
     verify_camera_token,
     verify_password,
 )
@@ -55,9 +63,28 @@ from backend.app.services.attendance import (
     open_session,
     update_attendance_manually,
 )
-from backend.app.services.face_templates import build_default_recognizer, register_face_image
+from backend.app.services.face_templates import build_default_recognizer, register_face_bytes, register_face_image
 
 router = APIRouter()
+
+
+def _attendance_request_read(db: Session, class_session: ClassSession) -> AttendanceRequestRead:
+    class_ = db.get(Class, class_session.class_id)
+    student_count = db.scalar(
+        select(func.count(ClassEnrollment.id)).where(ClassEnrollment.class_id == class_session.class_id)
+    )
+    return AttendanceRequestRead(
+        session_id=class_session.id,
+        class_id=class_session.class_id,
+        class_code=class_.code if class_ is not None else "",
+        class_name=class_.name if class_ is not None else "",
+        teacher_name=class_.teacher_display_name if class_ is not None else None,
+        expected_start_time=class_session.expected_start_time,
+        planned_end_time=class_session.planned_end_time,
+        late_grace_minutes=class_session.late_grace_minutes,
+        status=class_session.status,
+        student_count=student_count or 0,
+    )
 
 
 @router.get("/demo", include_in_schema=False)
@@ -115,6 +142,50 @@ def list_students(db: Session = Depends(get_db)) -> list[Student]:
     return list(db.scalars(select(Student).where(Student.deleted_at.is_(None))).all())
 
 
+@router.get("/admin/students/faces", response_model=list[StudentFaceSummary])
+def list_students_with_faces(
+    _user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> list[StudentFaceSummary]:
+    students = db.scalars(select(Student).where(Student.deleted_at.is_(None)).order_by(Student.student_code)).all()
+    summaries: list[StudentFaceSummary] = []
+    for student in students:
+        templates = db.scalars(
+            select(FaceTemplate)
+            .where(FaceTemplate.student_id == student.id, FaceTemplate.is_active.is_(True))
+            .order_by(FaceTemplate.created_at.desc())
+        ).all()
+        latest = templates[0] if templates else None
+        summaries.append(
+            StudentFaceSummary(
+                id=student.id,
+                student_code=student.student_code,
+                full_name=student.full_name,
+                class_label=student.class_label,
+                consent_status=student.consent_status,
+                face_template_count=len(templates),
+                latest_image_path=latest.image_path if latest is not None else None,
+                latest_image_url=f"/admin/face-templates/{latest.id}/image" if latest is not None else None,
+            )
+        )
+    return summaries
+
+
+@router.get("/admin/face-templates/{template_id}/image")
+def get_face_template_image(
+    template_id: int,
+    _user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    template = db.get(FaceTemplate, template_id)
+    if template is None or template.image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Face image not found")
+    image_path = Path(template.image_path)
+    if not image_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Face image file missing")
+    return FileResponse(image_path)
+
+
 @router.get("/classes", response_model=list[ClassRead], dependencies=[Depends(require_teacher_or_admin)])
 def list_classes(db: Session = Depends(get_db)) -> list[Class]:
     return list(db.scalars(select(Class)).all())
@@ -167,8 +238,94 @@ def open_class_session(
         opened_by=user.id,
         start_time=payload.start_time,
         expected_start_time=payload.expected_start_time,
+        planned_end_time=payload.planned_end_time,
         late_grace_minutes=payload.late_grace_minutes,
     )
+
+
+@router.post("/attendance-requests", response_model=AttendanceRequestRead)
+def create_attendance_request(
+    payload: AttendanceRequestCreate,
+    user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> AttendanceRequestRead:
+    class_ = db.scalar(select(Class).where(Class.code == payload.class_code))
+    if class_ is None:
+        class_ = Class(
+            code=payload.class_code,
+            name=payload.class_name,
+            teacher_id=user.id,
+            teacher_display_name=payload.teacher_name,
+        )
+        db.add(class_)
+        db.flush()
+    else:
+        class_.name = payload.class_name
+        class_.teacher_display_name = payload.teacher_name
+
+    for item in payload.students:
+        student = db.scalar(select(Student).where(Student.student_code == item.student_code))
+        if student is None:
+            student = Student(
+                student_code=item.student_code,
+                full_name=item.full_name,
+                class_label=item.class_label or payload.class_code,
+                consent_status=ConsentStatus.GRANTED.value,
+            )
+            db.add(student)
+            db.flush()
+        else:
+            student.full_name = item.full_name
+            student.class_label = item.class_label or student.class_label
+            if student.consent_status == "pending":
+                student.consent_status = ConsentStatus.GRANTED.value
+
+        enrollment = db.scalar(
+            select(ClassEnrollment).where(
+                ClassEnrollment.class_id == class_.id,
+                ClassEnrollment.student_id == student.id,
+            )
+        )
+        if enrollment is None:
+            db.add(ClassEnrollment(class_id=class_.id, student_id=student.id))
+
+    existing_open_session = db.scalar(
+        select(ClassSession).where(
+            ClassSession.class_id == class_.id,
+            ClassSession.status == SessionStatus.OPEN.value,
+        )
+    )
+    if existing_open_session is not None:
+        existing_open_session.expected_start_time = payload.expected_start_time
+        existing_open_session.planned_end_time = payload.planned_end_time
+        existing_open_session.late_grace_minutes = payload.late_grace_minutes
+        db.commit()
+        db.refresh(existing_open_session)
+        return _attendance_request_read(db, existing_open_session)
+
+    db.commit()
+    class_session = open_session(
+        db,
+        class_id=class_.id,
+        opened_by=user.id,
+        expected_start_time=payload.expected_start_time,
+        planned_end_time=payload.planned_end_time,
+        late_grace_minutes=payload.late_grace_minutes,
+    )
+    return _attendance_request_read(db, class_session)
+
+
+@router.get("/attendance-requests/open", response_model=list[AttendanceRequestRead])
+def list_open_attendance_requests(
+    _user: User = Depends(require_user_or_admin),
+    db: Session = Depends(get_db),
+) -> list[AttendanceRequestRead]:
+    sessions = db.scalars(
+        select(ClassSession)
+        .where(ClassSession.status == SessionStatus.OPEN.value)
+        .order_by(ClassSession.start_time.desc())
+    ).all()
+    return [_attendance_request_read(db, item) for item in sessions]
 
 
 @router.post("/sessions/{session_id}/close", response_model=SessionRead)
@@ -223,7 +380,7 @@ def list_attendance(
 @router.get("/sessions/{session_id}/attendance-board", response_model=AttendanceBoardRead)
 def attendance_board(
     session_id: int,
-    _user: User = Depends(require_teacher_or_admin),
+    _user: User = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ) -> AttendanceBoardRead:
     class_session = db.get(ClassSession, session_id)
@@ -293,7 +450,7 @@ def attendance_board(
 def scan_frame(
     session_id: int,
     payload: FrameScanRequest,
-    _user: User = Depends(require_teacher_or_admin),
+    _user: User = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ) -> FrameScanResponse:
     class_session = db.get(ClassSession, session_id)
@@ -377,6 +534,7 @@ def scan_frame(
         student_code=student.student_code if student is not None else None,
         full_name=student.full_name if student is not None else None,
         class_label=student.class_label if student is not None else None,
+        class_name=class_session.class_.name if class_session.class_ is not None else None,
         candidate_score=match.score,
         second_score=match.second_score,
         attendance=attendance,
@@ -409,6 +567,93 @@ def register_face_template(
 ) -> object:
     recognizer = build_default_recognizer()
     return register_face_image(db, student_id=student_id, file=file, recognizer=recognizer)
+
+
+def _student_code_from_filename(filename: str) -> str | None:
+    stem = Path(filename).stem.strip()
+    if not stem:
+        return None
+    for separator in ("_", "-", " "):
+        if separator in stem:
+            stem = stem.split(separator, 1)[0]
+            break
+    return stem.strip() or None
+
+
+@router.post("/admin/face-import", response_model=FaceImportResponse)
+def import_student_faces(
+    files: list[UploadFile] = File(...),
+    class_id: int | None = None,
+    _user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> FaceImportResponse:
+    recognizer = build_default_recognizer()
+    items: list[FaceImportItem] = []
+    imported = 0
+
+    for file in files:
+        filename = file.filename or "unknown.jpg"
+        student_code = _student_code_from_filename(filename)
+        if student_code is None:
+            items.append(FaceImportItem(filename=filename, status="failed", detail="Cannot parse student code"))
+            continue
+
+        student = db.scalar(select(Student).where(Student.student_code == student_code))
+        if student is None:
+            student = Student(
+                student_code=student_code,
+                full_name=student_code,
+                class_label=None,
+                consent_status=ConsentStatus.GRANTED.value,
+            )
+            db.add(student)
+            db.flush()
+
+        if class_id is not None:
+            if db.get(Class, class_id) is None:
+                db.rollback()
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Class not found")
+            enrollment = db.scalar(
+                select(ClassEnrollment).where(
+                    ClassEnrollment.class_id == class_id,
+                    ClassEnrollment.student_id == student.id,
+                )
+            )
+            if enrollment is None:
+                db.add(ClassEnrollment(class_id=class_id, student_id=student.id))
+
+        image_bytes = file.file.read()
+        try:
+            register_face_bytes(
+                db,
+                student_id=student.id,
+                image_bytes=image_bytes,
+                filename=f"{uuid.uuid4()}-{filename}",
+                recognizer=recognizer,
+            )
+        except HTTPException as exc:
+            db.rollback()
+            items.append(
+                FaceImportItem(
+                    filename=filename,
+                    student_code=student_code,
+                    status="failed",
+                    detail=str(exc.detail),
+                )
+            )
+            continue
+
+        imported += 1
+        items.append(
+            FaceImportItem(
+                filename=filename,
+                student_code=student_code,
+                status="imported",
+                detail="OK",
+            )
+        )
+
+    return FaceImportResponse(imported=imported, failed=len(items) - imported, items=items)
 
 
 @router.get("/classes/{class_id}/face-templates", dependencies=[Depends(verify_camera_token)])

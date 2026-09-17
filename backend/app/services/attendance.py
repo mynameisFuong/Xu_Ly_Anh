@@ -257,6 +257,7 @@ def open_session(
     opened_by: int,
     start_time: datetime | None = None,
     expected_start_time: datetime | None = None,
+    planned_end_time: datetime | None = None,
     late_grace_minutes: int = 0,
 ) -> ClassSession:
     existing_open = db.scalar(
@@ -273,6 +274,7 @@ def open_session(
         opened_by=opened_by,
         start_time=start_time or utc_now(),
         expected_start_time=expected_start_time,
+        planned_end_time=planned_end_time,
         late_grace_minutes=late_grace_minutes,
         status=SessionStatus.OPEN.value,
     )

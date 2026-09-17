@@ -37,6 +37,17 @@ class StudentRead(BaseModel):
     consent_status: str
 
 
+class StudentFaceSummary(BaseModel):
+    id: int
+    student_code: str
+    full_name: str
+    class_label: str | None
+    consent_status: str
+    face_template_count: int
+    latest_image_path: str | None
+    latest_image_url: str | None
+
+
 class ClassCreate(BaseModel):
     code: str
     name: str
@@ -51,12 +62,14 @@ class ClassRead(BaseModel):
     code: str
     name: str
     teacher_id: int
+    teacher_display_name: str | None = None
     term: str | None
 
 
 class SessionCreate(BaseModel):
     start_time: datetime | None = None
     expected_start_time: datetime | None = None
+    planned_end_time: datetime | None = None
     late_grace_minutes: int = Field(default=0, ge=0, le=180)
 
 
@@ -73,9 +86,39 @@ class SessionRead(BaseModel):
     opened_by: int
     start_time: datetime
     expected_start_time: datetime | None
+    planned_end_time: datetime | None
     late_grace_minutes: int
     end_time: datetime | None
     status: str
+
+
+class AttendanceRequestStudent(BaseModel):
+    student_code: str
+    full_name: str
+    class_label: str | None = None
+
+
+class AttendanceRequestCreate(BaseModel):
+    class_code: str
+    class_name: str
+    teacher_name: str
+    students: list[AttendanceRequestStudent]
+    expected_start_time: datetime
+    planned_end_time: datetime
+    late_grace_minutes: int = Field(default=0, ge=0, le=180)
+
+
+class AttendanceRequestRead(BaseModel):
+    session_id: int
+    class_id: int
+    class_code: str
+    class_name: str
+    teacher_name: str | None
+    expected_start_time: datetime | None
+    planned_end_time: datetime | None
+    late_grace_minutes: int
+    status: str
+    student_count: int
 
 
 class RecognitionEventCreate(BaseModel):
@@ -153,9 +196,23 @@ class FrameScanResponse(BaseModel):
     student_code: str | None = None
     full_name: str | None = None
     class_label: str | None = None
+    class_name: str | None = None
     candidate_score: float | None = None
     second_score: float | None = None
     attendance: AttendanceRead | None = None
+
+
+class FaceImportItem(BaseModel):
+    filename: str
+    student_code: str | None = None
+    status: str
+    detail: str
+
+
+class FaceImportResponse(BaseModel):
+    imported: int
+    failed: int
+    items: list[FaceImportItem]
 
 
 class FaceTemplateRead(BaseModel):

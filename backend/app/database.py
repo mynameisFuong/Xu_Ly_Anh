@@ -40,11 +40,16 @@ def _apply_sqlite_light_migrations() -> None:
     if not inspector.has_table("class_sessions"):
         return
 
+    class_columns = {column["name"] for column in inspector.get_columns("classes")}
     session_columns = {column["name"] for column in inspector.get_columns("class_sessions")}
     attendance_columns = {column["name"] for column in inspector.get_columns("attendance_records")}
     statements: list[str] = []
+    if "teacher_display_name" not in class_columns:
+        statements.append("ALTER TABLE classes ADD COLUMN teacher_display_name VARCHAR(160)")
     if "expected_start_time" not in session_columns:
         statements.append("ALTER TABLE class_sessions ADD COLUMN expected_start_time DATETIME")
+    if "planned_end_time" not in session_columns:
+        statements.append("ALTER TABLE class_sessions ADD COLUMN planned_end_time DATETIME")
     if "late_grace_minutes" not in session_columns:
         statements.append("ALTER TABLE class_sessions ADD COLUMN late_grace_minutes INTEGER NOT NULL DEFAULT 0")
     if "late_minutes" not in attendance_columns:

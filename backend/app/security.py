@@ -36,6 +36,12 @@ def require_teacher_or_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_user_or_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role not in {UserRole.ADMIN.value, UserRole.USER.value, UserRole.TEACHER.value}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User/admin role required")
+    return user
+
+
 def verify_camera_token(x_camera_token: str = Header(...)) -> None:
     expected = get_settings().camera_api_token
     if not hmac.compare_digest(x_camera_token, expected):

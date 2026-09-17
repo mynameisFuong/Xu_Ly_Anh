@@ -36,6 +36,17 @@ def main() -> None:
             db.add(teacher)
             db.flush()
 
+        device_user = db.scalar(select(User).where(User.username == "device01"))
+        if device_user is None:
+            device_user = User(
+                username="device01",
+                password_hash=hash_password("device123"),
+                role=UserRole.USER.value,
+                full_name="Attendance Device 01",
+            )
+            db.add(device_user)
+            db.flush()
+
         class_ = db.scalar(select(Class).where(Class.code == "IMG101"))
         if class_ is None:
             class_ = Class(code="IMG101", name="Xu Ly Anh", teacher_id=teacher.id, term="2026A")
@@ -67,6 +78,7 @@ def main() -> None:
         print("Seeded demo data.")
         print("Admin: username=admin password=admin123 header X-User-Id=1")
         print("Teacher: username=teacher password=teacher123")
+        print("Device user: username=device01 password=device123")
     finally:
         db.close()
 

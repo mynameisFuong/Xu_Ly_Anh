@@ -23,6 +23,7 @@ Trong MVP, chi backend duoc ghi ban ghi diem danh chinh thuc. Camera worker va A
 python -m venv .venv
 .\.venv\Scripts\activate
 pip install -r requirements.txt
+pip install -r requirements-camera.txt
 copy .env.example .env
 python scripts/init_db.py
 python scripts/seed_demo.py
@@ -73,6 +74,46 @@ Luot test nhanh:
 6. Bam `Bat dau quet`.
 
 Bang diem danh hien ma sinh vien, ho ten, lop, thoi gian diem danh, trang thai va canh bao dung gio/tre theo cau hinh cua buoi.
+
+## Chay App Desktop
+
+Mo terminal 1 de chay backend:
+
+```powershell
+.\.venv-win\Scripts\activate
+python scripts\init_db.py
+python scripts\seed_demo.py
+uvicorn backend.app.main:app --reload
+```
+
+Mo terminal 2 de chay app:
+
+```powershell
+.\.venv-win\Scripts\activate
+python desktop_app\main.py
+```
+
+Tai khoan demo:
+
+```text
+admin / admin123
+device01 / device123
+```
+
+Luong admin:
+
+1. Dang nhap bang `admin`.
+2. Tao yeu cau diem danh gom ten lop, danh sach sinh vien, giang vien, gio vao hoc va gio ket thuc.
+3. Import anh khuon mat. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
+
+Luong user/device:
+
+1. Dang nhap bang `device01`.
+2. Bam `Tai yeu cau` de lay cac yeu cau diem danh dang mo.
+3. Chon yeu cau va bam `Bat dau diem danh`.
+4. Dua mat vao camera. Khi nhan dien duoc, app hien ho ten, ma sinh vien, lop hoc va thong bao diem danh.
+
+Hien tai desktop app da ho tro diem danh sinh vien. Diem danh giang vien nen lam o buoc tiep theo bang cach tach doi tuong nhan dien thanh `Person`/`PersonFaceTemplates` dung chung cho sinh vien va giang vien, thay vi gan tat ca vao bang `Students`.
 
 Mac dinh demo dung header:
 

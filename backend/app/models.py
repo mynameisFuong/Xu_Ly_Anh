@@ -24,6 +24,7 @@ def utc_now() -> datetime:
 class UserRole(str, Enum):
     ADMIN = "admin"
     TEACHER = "teacher"
+    USER = "user"
 
 
 class ConsentStatus(str, Enum):
@@ -92,6 +93,7 @@ class Class(Base):
     code: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(160))
     teacher_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    teacher_display_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     term: Mapped[str | None] = mapped_column(String(40), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
@@ -121,6 +123,7 @@ class ClassSession(Base):
     opened_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     start_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     expected_start_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    planned_end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     late_grace_minutes: Mapped[int] = mapped_column(Integer, default=0)
     end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=SessionStatus.OPEN.value)
