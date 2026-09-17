@@ -1,0 +1,508 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Face Attendance Demo</title>
+    <style>
+      :root {
+        --ink: #1c2430;
+        --muted: #667085;
+        --line: #d7dde8;
+        --bg: #f5f7fb;
+        --panel: #ffffff;
+        --blue: #2563eb;
+        --blue-dark: #1d4ed8;
+        --green: #15803d;
+        --amber: #b45309;
+        --red: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Arial, Helvetica, sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+
+      header {
+        background: #ffffff;
+        border-bottom: 1px solid var(--line);
+        padding: 18px 28px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 700;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(340px, 460px) 1fr;
+        gap: 18px;
+        padding: 18px 28px 28px;
+      }
+
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .panel {
+        padding: 16px;
+      }
+
+      h2 {
+        margin: 0 0 14px;
+        font-size: 16px;
+      }
+
+      label {
+        display: block;
+        margin: 12px 0 6px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #344054;
+      }
+
+      input,
+      select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 0 10px;
+        font-size: 14px;
+        background: #ffffff;
+      }
+
+      button {
+        height: 38px;
+        border: 0;
+        border-radius: 6px;
+        padding: 0 13px;
+        font-size: 14px;
+        font-weight: 700;
+        color: #ffffff;
+        background: var(--blue);
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: var(--blue-dark);
+      }
+
+      button.secondary {
+        background: #475467;
+      }
+
+      button.success {
+        background: var(--green);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      video {
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        border-radius: 8px;
+        background: #111827;
+        object-fit: cover;
+      }
+
+      .status {
+        margin-top: 12px;
+        padding: 10px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: #f8fafc;
+        color: #344054;
+        min-height: 40px;
+      }
+
+      .status.ok {
+        border-color: #86efac;
+        background: #f0fdf4;
+        color: var(--green);
+      }
+
+      .status.warn {
+        border-color: #fcd34d;
+        background: #fffbeb;
+        color: var(--amber);
+      }
+
+      .status.error {
+        border-color: #fecaca;
+        background: #fef2f2;
+        color: var(--red);
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 10px 12px;
+        text-align: left;
+        font-size: 14px;
+        vertical-align: middle;
+      }
+
+      th {
+        background: #f8fafc;
+        color: #475467;
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        border-radius: 999px;
+        padding: 0 9px;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .present {
+        background: #dcfce7;
+        color: var(--green);
+      }
+
+      .late {
+        background: #fef3c7;
+        color: var(--amber);
+      }
+
+      .absent {
+        background: #fee2e2;
+        color: var(--red);
+      }
+
+      .pending {
+        background: #e2e8f0;
+        color: #475467;
+      }
+
+      canvas {
+        display: none;
+      }
+
+      @media (max-width: 980px) {
+        main {
+          grid-template-columns: 1fr;
+          padding: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Face Attendance Demo</h1>
+    </header>
+
+    <main>
+      <section class="panel">
+        <h2>Camera</h2>
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas" width="640" height="480"></canvas>
+
+        <label for="userId">Giảng viên</label>
+        <input id="userId" value="1" />
+
+        <div class="row">
+          <div>
+            <label for="classId">Lớp học</label>
+            <select id="classId"></select>
+          </div>
+          <div>
+            <label for="studentId">Sinh viên đăng ký mặt</label>
+            <select id="studentId"></select>
+          </div>
+        </div>
+
+        <div class="row">
+          <div>
+            <label for="period">Ca học</label>
+            <select id="period">
+              <option value="morning">Sáng 07:00</option>
+              <option value="afternoon">Chiều 13:00</option>
+            </select>
+          </div>
+          <div>
+            <label for="grace">Cho phép trễ</label>
+            <input id="grace" type="number" min="0" max="180" value="0" />
+          </div>
+        </div>
+
+        <label for="expectedStart">Giờ vào học</label>
+        <input id="expectedStart" type="datetime-local" />
+
+        <label for="sessionId">Buổi điểm danh</label>
+        <input id="sessionId" placeholder="Tự điền sau khi mở buổi" />
+
+        <div class="actions">
+          <button id="startCamera">Bật camera</button>
+          <button id="captureTemplate" class="secondary">Đăng ký ảnh</button>
+          <button id="openSession" class="success">Mở buổi</button>
+          <button id="updatePolicy" class="secondary">Cập nhật giờ</button>
+          <button id="scanToggle">Bắt đầu quét</button>
+        </div>
+
+        <div id="status" class="status">Sẵn sàng</div>
+      </section>
+
+      <section>
+        <div class="panel">
+          <h2>Bảng điểm danh</h2>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Mã số sinh viên</th>
+              <th>Họ tên</th>
+              <th>Lớp</th>
+              <th>Thời gian</th>
+              <th>Trạng thái</th>
+              <th>Cảnh báo</th>
+            </tr>
+          </thead>
+          <tbody id="attendanceRows"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script>
+      const api = "";
+      const els = {
+        video: document.getElementById("video"),
+        canvas: document.getElementById("canvas"),
+        userId: document.getElementById("userId"),
+        classId: document.getElementById("classId"),
+        studentId: document.getElementById("studentId"),
+        period: document.getElementById("period"),
+        grace: document.getElementById("grace"),
+        expectedStart: document.getElementById("expectedStart"),
+        sessionId: document.getElementById("sessionId"),
+        status: document.getElementById("status"),
+        rows: document.getElementById("attendanceRows"),
+        startCamera: document.getElementById("startCamera"),
+        captureTemplate: document.getElementById("captureTemplate"),
+        openSession: document.getElementById("openSession"),
+        updatePolicy: document.getElementById("updatePolicy"),
+        scanToggle: document.getElementById("scanToggle")
+      };
+
+      let stream = null;
+      let scanTimer = null;
+      let scanBusy = false;
+
+      function headers(extra = {}) {
+        return { "X-User-Id": els.userId.value || "1", ...extra };
+      }
+
+      function setStatus(text, type = "") {
+        els.status.className = `status ${type}`;
+        els.status.textContent = text;
+      }
+
+      function toDatetimeLocal(date) {
+        const pad = (value) => String(value).padStart(2, "0");
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      }
+
+      function setDefaultStart() {
+        const date = new Date();
+        date.setHours(els.period.value === "morning" ? 7 : 13, 0, 0, 0);
+        els.expectedStart.value = toDatetimeLocal(date);
+      }
+
+      async function requestJson(url, options = {}) {
+        const response = await fetch(api + url, options);
+        if (!response.ok) {
+          let detail = response.statusText;
+          try {
+            const body = await response.json();
+            detail = body.detail || detail;
+          } catch (_) {
+          }
+          throw new Error(detail);
+        }
+        if (response.status === 204) return null;
+        return response.json();
+      }
+
+      async function loadLookups() {
+        const [classes, students] = await Promise.all([
+          requestJson("/classes", { headers: headers() }),
+          requestJson("/students", { headers: headers() })
+        ]);
+        els.classId.innerHTML = classes
+          .map((item) => `<option value="${item.id}">${item.code} - ${item.name}</option>`)
+          .join("");
+        els.studentId.innerHTML = students
+          .map((item) => `<option value="${item.id}">${item.student_code} - ${item.full_name}</option>`)
+          .join("");
+      }
+
+      async function startCamera() {
+        stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+        els.video.srcObject = stream;
+        setStatus("Camera đã bật", "ok");
+      }
+
+      function captureDataUrl() {
+        const context = els.canvas.getContext("2d");
+        context.drawImage(els.video, 0, 0, els.canvas.width, els.canvas.height);
+        return els.canvas.toDataURL("image/jpeg", 0.86);
+      }
+
+      async function captureTemplate() {
+        if (!stream) await startCamera();
+        const dataUrl = captureDataUrl();
+        const blob = await (await fetch(dataUrl)).blob();
+        const form = new FormData();
+        form.append("file", blob, `student-${els.studentId.value}-${Date.now()}.jpg`);
+        await fetch(`${api}/students/${els.studentId.value}/face-templates`, {
+          method: "POST",
+          headers: headers(),
+          body: form
+        }).then(async (response) => {
+          if (!response.ok) {
+            const body = await response.json().catch(() => ({}));
+            throw new Error(body.detail || response.statusText);
+          }
+        });
+        setStatus("Đã đăng ký ảnh khuôn mặt", "ok");
+      }
+
+      async function openSession() {
+        const body = {
+          expected_start_time: new Date(els.expectedStart.value).toISOString(),
+          late_grace_minutes: Number(els.grace.value || 0)
+        };
+        const session = await requestJson(`/classes/${els.classId.value}/sessions`, {
+          method: "POST",
+          headers: { ...headers(), "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        els.sessionId.value = session.id;
+        setStatus(`Đã mở buổi ${session.id}`, "ok");
+        await refreshBoard();
+      }
+
+      async function updatePolicy() {
+        if (!els.sessionId.value) throw new Error("Chưa có buổi điểm danh");
+        const body = {
+          expected_start_time: new Date(els.expectedStart.value).toISOString(),
+          late_grace_minutes: Number(els.grace.value || 0)
+        };
+        await requestJson(`/sessions/${els.sessionId.value}/policy`, {
+          method: "PUT",
+          headers: { ...headers(), "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+        setStatus("Đã cập nhật giờ vào học", "ok");
+        await refreshBoard();
+      }
+
+      function renderBoard(board) {
+        els.rows.innerHTML = board.rows
+          .map((row) => {
+            const time = row.recorded_at ? new Date(row.recorded_at).toLocaleTimeString("vi-VN") : "";
+            return `<tr>
+              <td>${row.student_code}</td>
+              <td>${row.full_name}</td>
+              <td>${row.class_label || ""}</td>
+              <td>${time}</td>
+              <td><span class="badge ${row.status}">${row.status}</span></td>
+              <td>${row.alert}</td>
+            </tr>`;
+          })
+          .join("");
+      }
+
+      async function refreshBoard() {
+        if (!els.sessionId.value) return;
+        const board = await requestJson(`/sessions/${els.sessionId.value}/attendance-board`, { headers: headers() });
+        renderBoard(board);
+      }
+
+      async function scanOnce() {
+        if (!els.sessionId.value || scanBusy) return;
+        scanBusy = true;
+        try {
+          const dataUrl = captureDataUrl();
+          const result = await requestJson(`/sessions/${els.sessionId.value}/scan-frame`, {
+            method: "POST",
+            headers: { ...headers(), "Content-Type": "application/json" },
+            body: JSON.stringify({
+              camera_id: "browser-camera",
+              image_base64: dataUrl,
+              idempotency_key: `browser-${Date.now()}-${Math.random().toString(16).slice(2)}`
+            })
+          });
+          if (result.decision === "recognized") {
+            setStatus(`${result.student_code} - ${result.full_name}: ${result.message}`, result.message === "Dung gio" ? "ok" : "warn");
+          } else {
+            setStatus(result.message, "warn");
+          }
+          await refreshBoard();
+        } catch (error) {
+          setStatus(error.message, "error");
+        } finally {
+          scanBusy = false;
+        }
+      }
+
+      async function toggleScan() {
+        if (scanTimer) {
+          clearInterval(scanTimer);
+          scanTimer = null;
+          els.scanToggle.textContent = "Bắt đầu quét";
+          setStatus("Đã dừng quét");
+          return;
+        }
+        if (!stream) await startCamera();
+        scanTimer = setInterval(scanOnce, 1400);
+        els.scanToggle.textContent = "Dừng quét";
+        setStatus("Đang quét", "ok");
+      }
+
+      els.period.addEventListener("change", setDefaultStart);
+      els.startCamera.addEventListener("click", () => startCamera().catch((error) => setStatus(error.message, "error")));
+      els.captureTemplate.addEventListener("click", () => captureTemplate().catch((error) => setStatus(error.message, "error")));
+      els.openSession.addEventListener("click", () => openSession().catch((error) => setStatus(error.message, "error")));
+      els.updatePolicy.addEventListener("click", () => updatePolicy().catch((error) => setStatus(error.message, "error")));
+      els.scanToggle.addEventListener("click", () => toggleScan().catch((error) => setStatus(error.message, "error")));
+      els.sessionId.addEventListener("change", () => refreshBoard().catch((error) => setStatus(error.message, "error")));
+
+      setDefaultStart();
+      loadLookups()
+        .then(refreshBoard)
+        .catch((error) => setStatus(error.message, "error"));
+    </script>
+  </body>
+</html>
