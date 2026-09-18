@@ -182,6 +182,7 @@ class AttendanceRecord(Base):
     recognized_event_id: Mapped[int | None] = mapped_column(ForeignKey("recognition_events.id"), nullable=True)
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     late_minutes: Mapped[int] = mapped_column(Integer, default=0)
+    evidence_image_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
     session: Mapped[ClassSession] = relationship(back_populates="attendance_records")

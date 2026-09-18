@@ -67,11 +67,14 @@ http://127.0.0.1:8000/demo
 Luot test nhanh:
 
 1. Bam `Bat camera`.
-2. Chon sinh vien, dua mat vao camera, bam `Dang ky anh`.
-3. Chon ca hoc sang 07:00 hoac chieu 13:00.
-4. Sua `Gio vao hoc` va `Cho phep tre` neu can.
-5. Bam `Mo buoi`.
-6. Bam `Bat dau quet`.
+2. Trong muc `Dang ky khuon mat sinh vien`, chon sinh vien co san hoac nhap MSSV, ho ten, lop, consent roi bam `Luu sinh vien`.
+3. Dua mat vao camera va bam `Chup dang ky anh`.
+4. Hoac chon folder chua nhieu file anh sinh vien trong muc `Import folder anh sinh vien` va bam `Import folder anh`. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
+5. Bam `Tai danh sach` trong muc sinh vien de xem sinh vien da import, bam `Xem anh` de xem anh gan nhat, hoac dung `Sua`/`Xoa` de quan ly danh sach.
+6. Chon ca hoc sang 07:00 hoac chieu 13:00.
+7. Sua `Gio vao hoc` va `Cho phep tre` neu can.
+8. Bam `Mo buoi`.
+9. Bam `Bat dau quet`.
 
 Bang diem danh hien ma sinh vien, ho ten, lop, thoi gian diem danh, trang thai va canh bao dung gio/tre theo cau hinh cua buoi.
 

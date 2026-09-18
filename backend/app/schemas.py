@@ -27,6 +27,13 @@ class StudentCreate(BaseModel):
     consent_status: str = "pending"
 
 
+class StudentUpdate(BaseModel):
+    student_code: str | None = None
+    full_name: str | None = None
+    class_label: str | None = None
+    consent_status: str | None = None
+
+
 class StudentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -160,6 +167,8 @@ class AttendanceRead(BaseModel):
     recognized_event_id: int | None
     recorded_at: datetime
     late_minutes: int
+    evidence_image_path: str | None = None
+    evidence_image_url: str | None = None
     updated_by: int | None
 
 
@@ -173,6 +182,7 @@ class AttendanceBoardRow(BaseModel):
     recorded_at: datetime | None
     late_minutes: int
     alert: str
+    evidence_image_url: str | None = None
 
 
 class AttendanceBoardRead(BaseModel):
@@ -181,6 +191,19 @@ class AttendanceBoardRead(BaseModel):
     expected_start_time: datetime | None
     late_grace_minutes: int
     rows: list[AttendanceBoardRow]
+
+
+class AttendanceStatsRead(BaseModel):
+    session_id: int
+    class_id: int
+    total_students: int
+    present_count: int
+    late_count: int
+    absent_count: int
+    pending_count: int
+    present_rate: float
+    late_rate: float
+    absent_rate: float
 
 
 class FrameScanRequest(BaseModel):

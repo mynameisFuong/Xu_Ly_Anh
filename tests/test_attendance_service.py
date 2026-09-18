@@ -7,11 +7,13 @@ from backend.app.models import (
     Class,
     ClassEnrollment,
     ConsentStatus,
+    FaceTemplate,
     Student,
     User,
     UserRole,
 )
-from backend.app.schemas import AttendanceManualUpdate, RecognitionEventCreate
+from backend.app.schemas import AttendanceManualUpdate, RecognitionEventCreate, StudentUpdate
+from backend.app.api import _attendance_stats_from_board, _build_attendance_board, delete_student, update_student
 from backend.app.security import hash_password
 from backend.app.services.attendance import (
     close_session,
@@ -115,3 +117,79 @@ def test_close_session_marks_missing_enrolled_students_absent():
     assert closed.status == "closed"
     assert len(records) == 2
     assert {record.status for record in records} == {"absent"}
+
+
+def test_attendance_stats_are_calculated_from_class_roster():
+    db = build_db()
+    teacher, student, class_ = seed(db)
+    late_student = Student(student_code="SV002", full_name="Student 2", consent_status=ConsentStatus.GRANTED.value)
+    absent_student = Student(student_code="SV003", full_name="Student 3", consent_status=ConsentStatus.GRANTED.value)
+    db.add_all([late_student, absent_student])
+    db.flush()
+    db.add_all(
+        [
+            ClassEnrollment(class_id=class_.id, student_id=late_student.id),
+            ClassEnrollment(class_id=class_.id, student_id=absent_student.id),
+        ]
+    )
+    db.commit()
+
+    session = open_session(db, class_id=class_.id, opened_by=teacher.id)
+    update_attendance_manually(
+        db,
+        session_id=session.id,
+        student_id=student.id,
+        actor_user_id=teacher.id,
+        payload=AttendanceManualUpdate(status="present", reason="Arrived"),
+    )
+    update_attendance_manually(
+        db,
+        session_id=session.id,
+        student_id=late_student.id,
+        actor_user_id=teacher.id,
+        payload=AttendanceManualUpdate(status="late", reason="Arrived late"),
+    )
+    close_session(db, session_id=session.id, actor_user_id=teacher.id)
+
+    board = _build_attendance_board(db, session)
+    stats = _attendance_stats_from_board(board)
+
+    assert stats.total_students == 3
+    assert stats.present_count == 1
+    assert stats.late_count == 1
+    assert stats.absent_count == 1
+    assert stats.present_rate == 33.33
+    assert stats.late_rate == 33.33
+    assert stats.absent_rate == 33.33
+
+
+def test_admin_can_update_and_soft_delete_student():
+    db = build_db()
+    teacher, student, _class = seed(db)
+    template = FaceTemplate(
+        student_id=student.id,
+        embedding=b"1234",
+        model_name="test",
+        model_version="test",
+        embedding_dim=1,
+        is_active=True,
+    )
+    db.add(template)
+    db.commit()
+
+    updated = update_student(
+        student.id,
+        StudentUpdate(student_code="SV001A", full_name="Updated Student", class_label="KTPM", consent_status="granted"),
+        teacher,
+        db,
+    )
+    assert updated.student_code == "SV001A"
+    assert updated.full_name == "Updated Student"
+    assert updated.class_label == "KTPM"
+
+    delete_student(student.id, teacher, db)
+    db.refresh(student)
+    db.refresh(template)
+
+    assert student.deleted_at is not None
+    assert template.is_active is False

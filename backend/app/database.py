@@ -54,6 +54,8 @@ def _apply_sqlite_light_migrations() -> None:
         statements.append("ALTER TABLE class_sessions ADD COLUMN late_grace_minutes INTEGER NOT NULL DEFAULT 0")
     if "late_minutes" not in attendance_columns:
         statements.append("ALTER TABLE attendance_records ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
+    if "evidence_image_path" not in attendance_columns:
+        statements.append("ALTER TABLE attendance_records ADD COLUMN evidence_image_path VARCHAR(255)")
 
     if not statements:
         return

@@ -98,12 +98,27 @@
         background: var(--blue-dark);
       }
 
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.55;
+      }
+
       button.secondary {
         background: #475467;
       }
 
       button.success {
         background: var(--green);
+      }
+
+      button.danger {
+        background: var(--red);
+      }
+
+      button.small {
+        height: 30px;
+        padding: 0 10px;
+        font-size: 12px;
       }
 
       .row {
@@ -153,6 +168,81 @@
         border-color: #fecaca;
         background: #fef2f2;
         color: var(--red);
+      }
+
+      .import-result {
+        margin-top: 10px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+
+      .hint {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.4;
+      }
+
+      .right-column {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        min-width: 0;
+      }
+
+      .left-column {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        min-width: 0;
+      }
+
+      .student-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+
+      .student-toolbar h2 {
+        margin: 0;
+      }
+
+      .student-face-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 220px;
+        gap: 16px;
+      }
+
+      .table-scroll {
+        overflow-x: auto;
+      }
+
+      .portrait-preview {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #f8fafc;
+        min-height: 280px;
+        padding: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .portrait-preview img {
+        display: none;
+        width: 100%;
+        aspect-ratio: 2 / 3;
+        object-fit: cover;
+        border-radius: 6px;
+        background: #e2e8f0;
+      }
+
+      .portrait-preview div {
+        margin-top: 8px;
+        line-height: 1.4;
       }
 
       table {
@@ -215,6 +305,10 @@
           grid-template-columns: 1fr;
           padding: 14px;
         }
+
+        .student-face-layout {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
@@ -224,6 +318,7 @@
     </header>
 
     <main>
+      <div class="left-column">
       <section class="panel">
         <h2>Camera</h2>
         <video id="video" autoplay muted playsinline></video>
@@ -236,10 +331,6 @@
           <div>
             <label for="classId">Lớp học</label>
             <select id="classId"></select>
-          </div>
-          <div>
-            <label for="studentId">Sinh viên đăng ký mặt</label>
-            <select id="studentId"></select>
           </div>
         </div>
 
@@ -265,15 +356,61 @@
 
         <div class="actions">
           <button id="startCamera">Bật camera</button>
-          <button id="captureTemplate" class="secondary">Đăng ký ảnh</button>
           <button id="openSession" class="success">Mở buổi</button>
           <button id="updatePolicy" class="secondary">Cập nhật giờ</button>
           <button id="scanToggle">Bắt đầu quét</button>
         </div>
 
         <div id="status" class="status">Sẵn sàng</div>
+        <div id="importResult" class="import-result"></div>
       </section>
 
+      <section class="panel">
+        <h2>Đăng ký khuôn mặt sinh viên</h2>
+
+        <label for="studentId">Sinh viên</label>
+        <select id="studentId"></select>
+
+        <div class="row">
+          <div>
+            <label for="studentCodeInput">MSSV</label>
+            <input id="studentCodeInput" placeholder="SV001" />
+          </div>
+          <div>
+            <label for="studentClassInput">Lớp</label>
+            <input id="studentClassInput" placeholder="KTPM" />
+          </div>
+        </div>
+
+        <label for="studentNameInput">Họ tên</label>
+        <input id="studentNameInput" placeholder="Nguyen Van A" />
+
+        <label for="studentConsentInput">Trạng thái consent</label>
+        <select id="studentConsentInput">
+          <option value="granted">granted</option>
+          <option value="pending">pending</option>
+          <option value="revoked">revoked</option>
+        </select>
+
+        <div class="actions">
+          <button id="saveStudent" class="success">Lưu sinh viên</button>
+          <button id="captureTemplate" class="secondary">Chụp đăng ký ảnh</button>
+        </div>
+        <div class="hint">Bật camera, nhập thông tin sinh viên, bấm lưu rồi chụp đăng ký ảnh khuôn mặt.</div>
+      </section>
+
+      <section class="panel">
+        <h2>Import folder ảnh sinh viên</h2>
+        <label for="faceFiles">Folder ảnh</label>
+        <input id="faceFiles" type="file" accept="image/*" multiple webkitdirectory directory />
+        <div class="hint">Chọn folder chứa ảnh. Tên file nên bắt đầu bằng MSSV, ví dụ SV001.jpg hoặc SV001_1.jpg.</div>
+        <div class="actions">
+          <button id="importFaces" class="secondary">Import folder ảnh</button>
+        </div>
+      </section>
+      </div>
+
+      <div class="right-column">
       <section>
         <div class="panel">
           <h2>Bảng điểm danh</h2>
@@ -292,6 +429,34 @@
           <tbody id="attendanceRows"></tbody>
         </table>
       </section>
+      <section class="panel">
+        <div class="student-toolbar">
+          <h2>Sinh viên & ảnh khuôn mặt</h2>
+          <button id="loadStudentFaces" class="secondary">Tải danh sách</button>
+        </div>
+        <div class="student-face-layout">
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>MSSV</th>
+                  <th>Họ tên</th>
+                  <th>Lớp</th>
+                  <th>Số ảnh</th>
+                  <th>Ảnh</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="studentFaceRows"></tbody>
+            </table>
+          </div>
+          <div class="portrait-preview">
+            <img id="facePreview" alt="Ảnh sinh viên" />
+            <div id="facePreviewText">Chọn sinh viên để xem ảnh.</div>
+          </div>
+        </div>
+      </section>
+      </div>
     </main>
 
     <script>
@@ -302,14 +467,26 @@
         userId: document.getElementById("userId"),
         classId: document.getElementById("classId"),
         studentId: document.getElementById("studentId"),
+        studentCodeInput: document.getElementById("studentCodeInput"),
+        studentNameInput: document.getElementById("studentNameInput"),
+        studentClassInput: document.getElementById("studentClassInput"),
+        studentConsentInput: document.getElementById("studentConsentInput"),
         period: document.getElementById("period"),
         grace: document.getElementById("grace"),
         expectedStart: document.getElementById("expectedStart"),
         sessionId: document.getElementById("sessionId"),
+        faceFiles: document.getElementById("faceFiles"),
         status: document.getElementById("status"),
+        importResult: document.getElementById("importResult"),
         rows: document.getElementById("attendanceRows"),
+        studentFaceRows: document.getElementById("studentFaceRows"),
+        loadStudentFaces: document.getElementById("loadStudentFaces"),
+        facePreview: document.getElementById("facePreview"),
+        facePreviewText: document.getElementById("facePreviewText"),
         startCamera: document.getElementById("startCamera"),
+        saveStudent: document.getElementById("saveStudent"),
         captureTemplate: document.getElementById("captureTemplate"),
+        importFaces: document.getElementById("importFaces"),
         openSession: document.getElementById("openSession"),
         updatePolicy: document.getElementById("updatePolicy"),
         scanToggle: document.getElementById("scanToggle")
@@ -318,6 +495,8 @@
       let stream = null;
       let scanTimer = null;
       let scanBusy = false;
+      let facePreviewUrl = null;
+      let studentsCache = [];
 
       function headers(extra = {}) {
         return { "X-User-Id": els.userId.value || "1", ...extra };
@@ -326,6 +505,15 @@
       function setStatus(text, type = "") {
         els.status.className = `status ${type}`;
         els.status.textContent = text;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
       }
 
       function toDatetimeLocal(date) {
@@ -359,12 +547,83 @@
           requestJson("/classes", { headers: headers() }),
           requestJson("/students", { headers: headers() })
         ]);
+        const selectedStudentId = els.studentId.value;
+        studentsCache = students;
         els.classId.innerHTML = classes
           .map((item) => `<option value="${item.id}">${item.code} - ${item.name}</option>`)
           .join("");
-        els.studentId.innerHTML = students
+        els.studentId.innerHTML = `<option value="">Sinh viên mới</option>` + students
           .map((item) => `<option value="${item.id}">${item.student_code} - ${item.full_name}</option>`)
           .join("");
+        if (selectedStudentId && students.some((item) => String(item.id) === selectedStudentId)) {
+          els.studentId.value = selectedStudentId;
+        }
+        syncRegistrationForm();
+      }
+
+      function syncRegistrationForm() {
+        const student = studentsCache.find((item) => String(item.id) === els.studentId.value);
+        if (!student) {
+          els.studentCodeInput.value = "";
+          els.studentNameInput.value = "";
+          els.studentClassInput.value = "";
+          els.studentConsentInput.value = "granted";
+          return;
+        }
+        els.studentCodeInput.value = student.student_code || "";
+        els.studentNameInput.value = student.full_name || "";
+        els.studentClassInput.value = student.class_label || "";
+        els.studentConsentInput.value = student.consent_status || "granted";
+      }
+
+      async function saveStudentInfo() {
+        const studentCode = els.studentCodeInput.value.trim();
+        const fullName = els.studentNameInput.value.trim();
+        const classLabel = els.studentClassInput.value.trim();
+        const consentStatus = els.studentConsentInput.value || "granted";
+        if (!studentCode || !fullName) {
+          throw new Error("MSSV va ho ten khong duoc de trong");
+        }
+
+        const payload = {
+          student_code: studentCode,
+          full_name: fullName,
+          class_label: classLabel || null,
+          consent_status: consentStatus
+        };
+        let student;
+        if (els.studentId.value) {
+          student = await requestJson(`/students/${els.studentId.value}`, {
+            method: "PATCH",
+            headers: { ...headers(), "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        } else {
+          student = await requestJson("/students", {
+            method: "POST",
+            headers: { ...headers(), "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+        }
+
+        if (els.classId.value) {
+          await fetch(`${api}/classes/${els.classId.value}/enrollments/${student.id}`, {
+            method: "POST",
+            headers: headers()
+          }).then(async (response) => {
+            if (!response.ok && response.status !== 204) {
+              const body = await response.json().catch(() => ({}));
+              throw new Error(body.detail || response.statusText);
+            }
+          });
+        }
+
+        await loadLookups();
+        els.studentId.value = String(student.id);
+        syncRegistrationForm();
+        await loadStudentFaces();
+        setStatus("Da luu thong tin sinh vien", "ok");
+        return student;
       }
 
       async function startCamera() {
@@ -381,11 +640,12 @@
 
       async function captureTemplate() {
         if (!stream) await startCamera();
+        const student = await saveStudentInfo();
         const dataUrl = captureDataUrl();
         const blob = await (await fetch(dataUrl)).blob();
         const form = new FormData();
-        form.append("file", blob, `student-${els.studentId.value}-${Date.now()}.jpg`);
-        await fetch(`${api}/students/${els.studentId.value}/face-templates`, {
+        form.append("file", blob, `${student.student_code}-${Date.now()}.jpg`);
+        await fetch(`${api}/students/${student.id}/face-templates`, {
           method: "POST",
           headers: headers(),
           body: form
@@ -396,6 +656,169 @@
           }
         });
         setStatus("Đã đăng ký ảnh khuôn mặt", "ok");
+        await loadStudentFaces();
+      }
+
+      async function importFaces() {
+        const selectedFiles = Array.from(els.faceFiles.files || []);
+        if (!selectedFiles.length) {
+          throw new Error("Hay chon folder chua anh sinh vien");
+        }
+
+        const files = selectedFiles.filter((file) => /\.(jpe?g|png|webp|bmp)$/i.test(file.name));
+        if (!files.length) {
+          throw new Error("Folder khong co file anh hop le");
+        }
+        if (!els.classId.value) {
+          throw new Error("Hay chon lop hoc truoc khi import");
+        }
+
+        const form = new FormData();
+        for (const file of files) {
+          form.append("files", file, file.name);
+        }
+
+        const response = await fetch(`${api}/admin/face-import?class_id=${encodeURIComponent(els.classId.value)}`, {
+          method: "POST",
+          headers: headers(),
+          body: form
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || response.statusText);
+        }
+
+        const result = await response.json();
+        const details = result.items
+          .slice(0, 12)
+          .map((item) => `${item.filename}: ${item.status} - ${item.detail}`)
+          .join("\n");
+        const more = result.items.length > 12 ? `\n... va ${result.items.length - 12} file khac` : "";
+        const skipped = selectedFiles.length - files.length;
+        els.importResult.textContent = details + more + (skipped ? `\nBo qua ${skipped} file khong phai anh` : "");
+        setStatus(`Da import ${result.imported} anh, loi ${result.failed}`, result.failed || skipped ? "warn" : "ok");
+        await loadLookups();
+        await loadStudentFaces();
+      }
+
+      async function loadStudentFaces() {
+        const students = await requestJson("/admin/students/faces", { headers: headers() });
+        els.studentFaceRows.innerHTML = students
+          .map((student) => {
+            const imageUrl = student.latest_image_url || "";
+            const disabled = imageUrl ? "" : "disabled";
+            const buttonText = imageUrl ? "Xem ảnh" : "Chưa có";
+            return `<tr>
+              <td>${escapeHtml(student.student_code)}</td>
+              <td>${escapeHtml(student.full_name)}</td>
+              <td>${escapeHtml(student.class_label || "")}</td>
+              <td>${student.face_template_count}</td>
+              <td>
+                <button class="small secondary" ${disabled}
+                  data-image-url="${escapeHtml(imageUrl)}"
+                  data-student-name="${escapeHtml(`${student.student_code} - ${student.full_name}`)}">
+                  ${buttonText}
+                </button>
+              </td>
+              <td>
+                <button class="small secondary"
+                  data-action="edit"
+                  data-student-id="${student.id}"
+                  data-student-code="${escapeHtml(student.student_code)}"
+                  data-full-name="${escapeHtml(student.full_name)}"
+                  data-class-label="${escapeHtml(student.class_label || "")}"
+                  data-consent-status="${escapeHtml(student.consent_status)}">
+                  Sửa
+                </button>
+                <button class="small danger"
+                  data-action="delete"
+                  data-student-id="${student.id}"
+                  data-student-name="${escapeHtml(`${student.student_code} - ${student.full_name}`)}">
+                  Xóa
+                </button>
+              </td>
+            </tr>`;
+          })
+          .join("");
+        setStatus(`Da tai ${students.length} sinh vien`, "ok");
+      }
+
+      function clearFacePreview() {
+        if (facePreviewUrl) {
+          URL.revokeObjectURL(facePreviewUrl);
+          facePreviewUrl = null;
+        }
+        els.facePreview.removeAttribute("src");
+        els.facePreview.style.display = "none";
+        els.facePreviewText.textContent = "Chọn sinh viên để xem ảnh.";
+      }
+
+      async function editStudent(button) {
+        const studentId = button.dataset.studentId;
+        const studentCode = prompt("MSSV", button.dataset.studentCode || "");
+        if (studentCode === null) return;
+        const fullName = prompt("Họ tên", button.dataset.fullName || "");
+        if (fullName === null) return;
+        const classLabel = prompt("Lớp", button.dataset.classLabel || "");
+        if (classLabel === null) return;
+        const consentStatus = prompt("Trạng thái consent: pending, granted, revoked", button.dataset.consentStatus || "granted");
+        if (consentStatus === null) return;
+        if (!studentCode.trim() || !fullName.trim()) {
+          throw new Error("MSSV va ho ten khong duoc de trong");
+        }
+
+        await requestJson(`/students/${studentId}`, {
+          method: "PATCH",
+          headers: { ...headers(), "Content-Type": "application/json" },
+          body: JSON.stringify({
+            student_code: studentCode.trim(),
+            full_name: fullName.trim(),
+            class_label: classLabel.trim() || null,
+            consent_status: consentStatus.trim() || "pending"
+          })
+        });
+        setStatus("Đã cập nhật sinh viên", "ok");
+        await loadLookups();
+        await loadStudentFaces();
+        await refreshBoard();
+      }
+
+      async function deleteStudent(button) {
+        const studentId = button.dataset.studentId;
+        const studentName = button.dataset.studentName || "sinh viên này";
+        if (!confirm(`Xóa ${studentName}? Sinh viên sẽ không còn xuất hiện trong danh sách và mẫu khuôn mặt sẽ bị tắt.`)) {
+          return;
+        }
+
+        const response = await fetch(`${api}/students/${studentId}`, {
+          method: "DELETE",
+          headers: headers()
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || response.statusText);
+        }
+        clearFacePreview();
+        setStatus("Đã xóa sinh viên", "ok");
+        await loadLookups();
+        await loadStudentFaces();
+        await refreshBoard();
+      }
+
+      async function showStudentFace(imageUrl, studentName) {
+        const response = await fetch(api + imageUrl, { headers: headers() });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || response.statusText);
+        }
+        const blob = await response.blob();
+        if (facePreviewUrl) {
+          URL.revokeObjectURL(facePreviewUrl);
+        }
+        facePreviewUrl = URL.createObjectURL(blob);
+        els.facePreview.src = facePreviewUrl;
+        els.facePreview.style.display = "block";
+        els.facePreviewText.textContent = studentName;
       }
 
       async function openSession() {
@@ -492,8 +915,27 @@
       }
 
       els.period.addEventListener("change", setDefaultStart);
+      els.studentId.addEventListener("change", syncRegistrationForm);
       els.startCamera.addEventListener("click", () => startCamera().catch((error) => setStatus(error.message, "error")));
+      els.saveStudent.addEventListener("click", () => saveStudentInfo().catch((error) => setStatus(error.message, "error")));
       els.captureTemplate.addEventListener("click", () => captureTemplate().catch((error) => setStatus(error.message, "error")));
+      els.importFaces.addEventListener("click", () => importFaces().catch((error) => setStatus(error.message, "error")));
+      els.loadStudentFaces.addEventListener("click", () => loadStudentFaces().catch((error) => setStatus(error.message, "error")));
+      els.studentFaceRows.addEventListener("click", (event) => {
+        const actionButton = event.target.closest("button[data-action]");
+        if (actionButton && actionButton.dataset.action === "edit") {
+          editStudent(actionButton).catch((error) => setStatus(error.message, "error"));
+          return;
+        }
+        if (actionButton && actionButton.dataset.action === "delete") {
+          deleteStudent(actionButton).catch((error) => setStatus(error.message, "error"));
+          return;
+        }
+
+        const button = event.target.closest("button[data-image-url]");
+        if (!button || button.disabled) return;
+        showStudentFace(button.dataset.imageUrl, button.dataset.studentName).catch((error) => setStatus(error.message, "error"));
+      });
       els.openSession.addEventListener("click", () => openSession().catch((error) => setStatus(error.message, "error")));
       els.updatePolicy.addEventListener("click", () => updatePolicy().catch((error) => setStatus(error.message, "error")));
       els.scanToggle.addEventListener("click", () => toggleScan().catch((error) => setStatus(error.message, "error")));
@@ -501,6 +943,7 @@
 
       setDefaultStart();
       loadLookups()
+        .then(loadStudentFaces)
         .then(refreshBoard)
         .catch((error) => setStatus(error.message, "error"));
     </script>

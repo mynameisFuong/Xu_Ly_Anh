@@ -1,7 +1,7 @@
 import csv
 import base64
 import uuid
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.app.config import get_settings
 from backend.app.database import get_db
 from backend.app.models import (
     AttendanceRecord,
@@ -21,6 +22,7 @@ from backend.app.models import (
     SessionStatus,
     Student,
     User,
+    utc_now,
 )
 from backend.app.schemas import (
     AttendanceManualUpdate,
@@ -29,6 +31,7 @@ from backend.app.schemas import (
     AttendanceRead,
     AttendanceRequestCreate,
     AttendanceRequestRead,
+    AttendanceStatsRead,
     ClassCreate,
     ClassRead,
     FaceImportItem,
@@ -44,6 +47,7 @@ from backend.app.schemas import (
     StudentFaceSummary,
     StudentCreate,
     StudentRead,
+    StudentUpdate,
     UserCreate,
     UserRead,
 )
@@ -66,6 +70,116 @@ from backend.app.services.attendance import (
 from backend.app.services.face_templates import build_default_recognizer, register_face_bytes, register_face_image
 
 router = APIRouter()
+
+
+def _attendance_evidence_url(attendance: AttendanceRecord | None) -> str | None:
+    if attendance is None or attendance.evidence_image_path is None:
+        return None
+    return f"/attendance/{attendance.id}/evidence"
+
+
+def _save_attendance_evidence(
+    db: Session,
+    *,
+    attendance: AttendanceRecord | None,
+    image_bytes: bytes,
+) -> None:
+    if attendance is None or attendance.evidence_image_path is not None:
+        return
+
+    storage_dir = get_settings().storage_dir / "attendance_evidence" / f"session-{attendance.session_id}"
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    image_path = storage_dir / f"attendance-{attendance.id}-student-{attendance.student_id}.jpg"
+    image_path.write_bytes(image_bytes)
+    attendance.evidence_image_path = str(image_path)
+    db.commit()
+    db.refresh(attendance)
+
+
+def _build_attendance_board(db: Session, class_session: ClassSession) -> AttendanceBoardRead:
+    rows = db.execute(
+        select(Student, AttendanceRecord)
+        .join(ClassEnrollment, ClassEnrollment.student_id == Student.id)
+        .outerjoin(
+            AttendanceRecord,
+            (AttendanceRecord.student_id == Student.id) & (AttendanceRecord.session_id == class_session.id),
+        )
+        .where(ClassEnrollment.class_id == class_session.class_id)
+        .where(Student.deleted_at.is_(None))
+        .order_by(Student.student_code)
+    ).all()
+    board_rows: list[AttendanceBoardRow] = []
+    for student, attendance in rows:
+        if attendance is None:
+            board_rows.append(
+                AttendanceBoardRow(
+                    student_id=student.id,
+                    student_code=student.student_code,
+                    full_name=student.full_name,
+                    class_label=student.class_label,
+                    status="pending",
+                    source=None,
+                    recorded_at=None,
+                    late_minutes=0,
+                    alert="Chua diem danh",
+                )
+            )
+            continue
+
+        if attendance.status == "late":
+            alert = f"Tre {attendance.late_minutes} phut"
+        elif attendance.status == "present":
+            alert = "Dung gio"
+        elif attendance.status == "absent":
+            alert = "Vang"
+        else:
+            alert = attendance.status
+        board_rows.append(
+            AttendanceBoardRow(
+                student_id=student.id,
+                student_code=student.student_code,
+                full_name=student.full_name,
+                class_label=student.class_label,
+                status=attendance.status,
+                source=attendance.source,
+                recorded_at=attendance.recorded_at,
+                late_minutes=attendance.late_minutes,
+                alert=alert,
+                evidence_image_url=_attendance_evidence_url(attendance),
+            )
+        )
+
+    return AttendanceBoardRead(
+        session_id=class_session.id,
+        class_id=class_session.class_id,
+        expected_start_time=class_session.expected_start_time,
+        late_grace_minutes=class_session.late_grace_minutes,
+        rows=board_rows,
+    )
+
+
+def _attendance_stats_from_board(board: AttendanceBoardRead) -> AttendanceStatsRead:
+    total = len(board.rows)
+    present_count = sum(1 for row in board.rows if row.status == "present")
+    late_count = sum(1 for row in board.rows if row.status == "late")
+    absent_count = sum(1 for row in board.rows if row.status == "absent")
+    pending_count = sum(1 for row in board.rows if row.status == "pending")
+
+    def rate(count: int) -> float:
+        return round(count * 100 / total, 2) if total else 0.0
+
+    return AttendanceStatsRead(
+        session_id=board.session_id,
+        class_id=board.class_id,
+        total_students=total,
+        present_count=present_count,
+        late_count=late_count,
+        absent_count=absent_count,
+        pending_count=pending_count,
+        present_rate=rate(present_count),
+        late_rate=rate(late_count),
+        absent_rate=rate(absent_count),
+    )
 
 
 def _attendance_request_read(db: Session, class_session: ClassSession) -> AttendanceRequestRead:
@@ -140,6 +254,46 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)) -> Stu
 @router.get("/students", response_model=list[StudentRead], dependencies=[Depends(require_teacher_or_admin)])
 def list_students(db: Session = Depends(get_db)) -> list[Student]:
     return list(db.scalars(select(Student).where(Student.deleted_at.is_(None))).all())
+
+
+@router.patch("/students/{student_id}", response_model=StudentRead)
+def update_student(
+    student_id: int,
+    payload: StudentUpdate,
+    _user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Student:
+    student = db.get(Student, student_id)
+    if student is None or student.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+
+    updates = payload.model_dump(exclude_unset=True)
+    for field, value in updates.items():
+        setattr(student, field, value)
+
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Student code already exists") from exc
+    db.refresh(student)
+    return student
+
+
+@router.delete("/students/{student_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_student(
+    student_id: int,
+    _user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    student = db.get(Student, student_id)
+    if student is None or student.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Student not found")
+
+    student.deleted_at = utc_now()
+    db.query(FaceTemplate).filter(FaceTemplate.student_id == student_id).update({"is_active": False})
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/admin/students/faces", response_model=list[StudentFaceSummary])
@@ -386,64 +540,34 @@ def attendance_board(
     class_session = db.get(ClassSession, session_id)
     if class_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return _build_attendance_board(db, class_session)
 
-    rows = db.execute(
-        select(Student, AttendanceRecord)
-        .join(ClassEnrollment, ClassEnrollment.student_id == Student.id)
-        .outerjoin(
-            AttendanceRecord,
-            (AttendanceRecord.student_id == Student.id) & (AttendanceRecord.session_id == session_id),
-        )
-        .where(ClassEnrollment.class_id == class_session.class_id)
-        .order_by(Student.student_code)
-    ).all()
-    board_rows: list[AttendanceBoardRow] = []
-    for student, attendance in rows:
-        if attendance is None:
-            board_rows.append(
-                AttendanceBoardRow(
-                    student_id=student.id,
-                    student_code=student.student_code,
-                    full_name=student.full_name,
-                    class_label=student.class_label,
-                    status="pending",
-                    source=None,
-                    recorded_at=None,
-                    late_minutes=0,
-                    alert="Chua diem danh",
-                )
-            )
-            continue
 
-        if attendance.status == "late":
-            alert = f"Tre {attendance.late_minutes} phut"
-        elif attendance.status == "present":
-            alert = "Dung gio"
-        elif attendance.status == "absent":
-            alert = "Vang"
-        else:
-            alert = attendance.status
-        board_rows.append(
-            AttendanceBoardRow(
-                student_id=student.id,
-                student_code=student.student_code,
-                full_name=student.full_name,
-                class_label=student.class_label,
-                status=attendance.status,
-                source=attendance.source,
-                recorded_at=attendance.recorded_at,
-                late_minutes=attendance.late_minutes,
-                alert=alert,
-            )
-        )
+@router.get("/sessions/{session_id}/attendance-stats", response_model=AttendanceStatsRead)
+def attendance_stats(
+    session_id: int,
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> AttendanceStatsRead:
+    class_session = db.get(ClassSession, session_id)
+    if class_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return _attendance_stats_from_board(_build_attendance_board(db, class_session))
 
-    return AttendanceBoardRead(
-        session_id=class_session.id,
-        class_id=class_session.class_id,
-        expected_start_time=class_session.expected_start_time,
-        late_grace_minutes=class_session.late_grace_minutes,
-        rows=board_rows,
-    )
+
+@router.get("/attendance/{attendance_id}/evidence")
+def get_attendance_evidence(
+    attendance_id: int,
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    attendance = db.get(AttendanceRecord, attendance_id)
+    if attendance is None or attendance.evidence_image_path is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attendance evidence not found")
+    image_path = Path(attendance.evidence_image_path)
+    if not image_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attendance evidence file missing")
+    return FileResponse(image_path)
 
 
 @router.post("/sessions/{session_id}/scan-frame", response_model=FrameScanResponse)
@@ -495,8 +619,6 @@ def scan_frame(
     if not templates:
         return FrameScanResponse(decision="unknown", message="No face templates registered for this class")
 
-    from backend.app.config import get_settings
-
     settings = get_settings()
     match = match_embedding(
         result.embedding,
@@ -522,6 +644,7 @@ def scan_frame(
         idempotency_key=payload.idempotency_key or str(uuid.uuid4()),
     )
     _event, attendance = create_recognition_event(db, session_id=session_id, payload=event_payload)
+    _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
     student = db.get(Student, match.student_id)
     message = "Dung gio"
     if attendance is not None and attendance.status == "late":
@@ -704,4 +827,112 @@ def export_attendance_csv(
         content=output.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="attendance-session-{session_id}.csv"'},
+    )
+
+
+@router.get("/reports/attendance.xlsx")
+def export_attendance_excel(
+    session_id: int,
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill
+        from openpyxl.utils import get_column_letter
+    except ModuleNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Excel export dependency is not installed. Install requirements.txt.",
+        ) from exc
+
+    class_session = db.get(ClassSession, session_id)
+    if class_session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    class_ = db.get(Class, class_session.class_id)
+    board = _build_attendance_board(db, class_session)
+    stats = _attendance_stats_from_board(board)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Attendance"
+
+    title = f"Attendance report - {class_.code if class_ else ''}"
+    sheet["A1"] = title
+    sheet["A1"].font = Font(size=16, bold=True)
+    sheet.merge_cells("A1:H1")
+
+    metadata = [
+        ("Class", f"{class_.code} - {class_.name}" if class_ else str(class_session.class_id)),
+        ("Teacher", class_.teacher_display_name if class_ else ""),
+        ("Expected start", class_session.expected_start_time.isoformat() if class_session.expected_start_time else ""),
+        ("Late grace minutes", class_session.late_grace_minutes),
+        ("Total students", stats.total_students),
+        ("Present rate", f"{stats.present_rate}%"),
+        ("Late rate", f"{stats.late_rate}%"),
+        ("Absent rate", f"{stats.absent_rate}%"),
+    ]
+    for index, (label, value) in enumerate(metadata, start=3):
+        sheet.cell(row=index, column=1, value=label).font = Font(bold=True)
+        sheet.cell(row=index, column=2, value=value)
+
+    summary_start = 3
+    summary = [
+        ("Present", stats.present_count),
+        ("Late", stats.late_count),
+        ("Absent", stats.absent_count),
+        ("Pending", stats.pending_count),
+    ]
+    for offset, (label, value) in enumerate(summary):
+        row = summary_start + offset
+        sheet.cell(row=row, column=4, value=label).font = Font(bold=True)
+        sheet.cell(row=row, column=5, value=value)
+
+    header_row = 13
+    headers = [
+        "Student code",
+        "Full name",
+        "Class",
+        "Recorded at",
+        "Status",
+        "Source",
+        "Late minutes",
+        "Evidence image",
+    ]
+    for column, header in enumerate(headers, start=1):
+        cell = sheet.cell(row=header_row, column=column, value=header)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="2563EB")
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_index, row in enumerate(board.rows, start=header_row + 1):
+        values = [
+            row.student_code,
+            row.full_name,
+            row.class_label or "",
+            row.recorded_at.isoformat() if row.recorded_at else "",
+            row.status,
+            row.source or "",
+            row.late_minutes,
+            row.evidence_image_url or "",
+        ]
+        for column, value in enumerate(values, start=1):
+            sheet.cell(row=row_index, column=column, value=value)
+
+    for column in range(1, len(headers) + 1):
+        column_letter = get_column_letter(column)
+        max_length = max(
+            len(str(sheet.cell(row=row, column=column).value or ""))
+            for row in range(1, sheet.max_row + 1)
+        )
+        sheet.column_dimensions[column_letter].width = min(max(max_length + 2, 12), 42)
+    sheet.freeze_panes = "A14"
+
+    output = BytesIO()
+    workbook.save(output)
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="attendance-session-{session_id}.xlsx"'},
     )
