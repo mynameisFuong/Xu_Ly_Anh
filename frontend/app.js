@@ -29,10 +29,10 @@
     );
   const labels = {
     overview: "Tổng quan",
-    students: "Sinh viên",
-    faces: "Khuôn mặt",
+    students: "Danh sách sinh viên",
+    faces: "Đăng ký Face ID",
     sessions: "Buổi học",
-    attendance: "Điểm danh",
+    attendance: "Quét điểm danh",
   };
   const statusLabels = {
     present: "Đúng giờ",
@@ -130,16 +130,46 @@
     return;
   }
 
-  const nav = [
-    ["overview", "/demo", "◫"],
-    ["students", "/demo/students", "♙"],
-    ["faces", "/demo/faces", "◎"],
-    ["sessions", "/demo/sessions", "▤"],
-    ["attendance", "/demo/attendance", "◉"],
+  const navGroups = [
+    {
+      id: "overview",
+      title: "Không gian làm việc",
+      items: [["overview", "/demo", "◫"]],
+    },
+    {
+      id: "students",
+      title: "Quản lý sinh viên",
+      items: [["students", "/demo/students", "♙"]],
+    },
+    {
+      id: "faces",
+      title: "Đăng ký khuôn mặt",
+      items: [["faces", "/demo/faces", "◎"]],
+    },
+    {
+      id: "attendance",
+      title: "Điểm danh",
+      items: [
+        ["sessions", "/demo/sessions", "▤"],
+        ["attendance", "/demo/attendance", "◉"],
+      ],
+    },
   ];
+  const navHtml = navGroups
+    .map((group) => {
+      const items = group.items
+        .map(
+          ([key, url, icon]) =>
+            `<a class="nav-link ${page === key ? "active" : ""}" ${page === key ? 'aria-current="page"' : ""} href="${url}"><span class="nav-icon" aria-hidden="true">${icon}</span><span>${labels[key]}</span></a>`,
+        )
+        .join("");
+      const current = group.items.some(([key]) => key === page);
+      return `<div class="nav-group ${current ? "current" : ""}" role="group" aria-labelledby="nav-group-${group.id}"><h2 class="nav-group-title" id="nav-group-${group.id}">${group.title}</h2>${items}</div>`;
+    })
+    .join("");
   $("shell").insertAdjacentHTML(
     "afterbegin",
-    `<aside class="sidebar" id="sidebar"><a class="brand" href="/demo"><span class="brand-mark">FA</span><span><strong>Face Attendance</strong><small>Hệ thống điểm danh</small></span></a><button class="mobile-menu" id="menuToggle" aria-label="Mở menu" aria-expanded="false">☰</button><div class="nav-label">Không gian làm việc</div><nav aria-label="Điều hướng chính">${nav.map(([key, url, icon]) => `<a class="nav-link ${page === key ? "active" : ""}" ${page === key ? 'aria-current="page"' : ""} href="${url}"><span class="nav-icon" aria-hidden="true">${icon}</span>${labels[key]}</a>`).join("")}</nav><div class="side-bottom"><small>Đang đăng nhập</small><strong>${esc(account.full_name)}</strong><button class="logout" id="logout">Đăng xuất</button></div></aside>`,
+    `<aside class="sidebar" id="sidebar"><a class="brand" href="/demo"><span class="brand-mark">FA</span><span><strong>Face Attendance</strong><small>Hệ thống điểm danh</small></span></a><button class="mobile-menu" id="menuToggle" aria-label="Mở menu" aria-expanded="false" aria-controls="sideNav">☰</button><nav class="side-nav" id="sideNav" aria-label="Điều hướng chính">${navHtml}</nav><div class="side-bottom"><small>Đang đăng nhập</small><strong>${esc(account.full_name)}</strong><button class="logout" id="logout">Đăng xuất</button></div></aside>`,
   );
   $("topbar").className = "topbar";
   $("topbar").innerHTML =
@@ -151,6 +181,7 @@
   $("menuToggle").addEventListener("click", () => {
     const open = $("sidebar").classList.toggle("open");
     $("menuToggle").setAttribute("aria-expanded", String(open));
+    $("menuToggle").setAttribute("aria-label", open ? "Đóng menu" : "Mở menu");
   });
 
   async function getClasses() {

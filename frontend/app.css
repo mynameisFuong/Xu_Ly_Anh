@@ -131,13 +131,31 @@ select:focus-visible {
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-.nav-label {
-  padding: 0 13px 9px;
+.side-nav {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #426b6b transparent;
+}
+.nav-group {
+  padding: 0 0 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid #28474b;
+}
+.nav-group:last-child {
+  border-bottom: 0;
+}
+.nav-group-title {
+  padding: 0 13px 5px;
+  margin: 0;
   color: #8eaaa9;
   font-size: 10px;
   letter-spacing: 0.15em;
   text-transform: uppercase;
   font-weight: 700;
+}
+.nav-group.current .nav-group-title {
+  color: #9fe5d9;
 }
 .nav-link {
   display: flex;
@@ -165,6 +183,7 @@ select:focus-visible {
 }
 .side-bottom {
   margin-top: auto;
+  flex-shrink: 0;
   padding: 15px 12px 0;
   border-top: 1px solid #2c4a4d;
 }
@@ -922,13 +941,11 @@ tbody tr:hover {
     padding: 0;
   }
   .sidebar nav,
-  .side-bottom,
-  .nav-label {
+  .side-bottom {
     display: none;
   }
   .sidebar.open nav,
-  .sidebar.open .side-bottom,
-  .sidebar.open .nav-label {
+  .sidebar.open .side-bottom {
     display: block;
   }
   .sidebar.open nav {
