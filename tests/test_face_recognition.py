@@ -1,6 +1,6 @@
 import numpy as np
 
-from ai_pipeline.recognition import PoseResult, classify_enrollment_pose, classify_pose, match_embedding
+from ai_pipeline.recognition import FaceRecognizer, PoseResult, classify_enrollment_pose, classify_pose, match_embedding
 
 
 def test_classify_pose_covers_guided_faceid_directions():
@@ -18,6 +18,23 @@ def test_relative_pitch_accepts_a_gentle_tilt_from_front_position():
     assert classify_enrollment_pose(PoseResult("front", 0, 9), "up", front_pitch) == "front"
     assert classify_enrollment_pose(PoseResult("right", 22, 0), "up", front_pitch) == "right"
     assert classify_enrollment_pose(PoseResult("front", 0, 9), "front", front_pitch) == "front"
+
+
+def test_detected_face_box_is_returned_even_when_image_quality_is_low():
+    class FaceLibrary:
+        def face_locations(self, *_args, **_kwargs):
+            return [(20, 80, 100, 10)]
+
+        def face_landmarks(self, *_args, **_kwargs):
+            return []
+
+        def face_encodings(self, *_args, **_kwargs):
+            return [np.zeros(128, dtype=np.float32)]
+
+    recognizer = FaceRecognizer.__new__(FaceRecognizer)
+    recognizer._face_recognition = FaceLibrary()
+    result = recognizer._extract_dlib(np.zeros((120, 100, 3), dtype=np.uint8), num_jitters=1)
+    assert result.face_box == (10, 20, 70, 80)
 
 
 def test_euclidean_match_uses_best_of_multiple_pose_templates():

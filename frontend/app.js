@@ -639,10 +639,64 @@
     scanTimer = null,
     scanBusy = false,
     activeSession = null,
-    latestBoard = null;
+    latestBoard = null,
+    lastScanResult = null;
+  function renderScanFace(result) {
+    const box = $("scanFaceBox");
+    const video = $("scanVideo");
+    const camera = $("attendanceCamera");
+    const face = result?.face_box;
+    if (
+      !scanTimer ||
+      !Array.isArray(face) ||
+      face.length !== 4 ||
+      !video.videoWidth
+    ) {
+      box.hidden = true;
+      return;
+    }
+    const [x, y, width, height] = face.map(Number);
+    if (
+      ![x, y, width, height].every(Number.isFinite) ||
+      width <= 0 ||
+      height <= 0
+    ) {
+      box.hidden = true;
+      return;
+    }
+    const scale = Math.max(
+      camera.clientWidth / video.videoWidth,
+      camera.clientHeight / video.videoHeight,
+    );
+    const offsetX = (camera.clientWidth - video.videoWidth * scale) / 2;
+    const offsetY = (camera.clientHeight - video.videoHeight * scale) / 2;
+    // The displayed selfie video is mirrored, while the frame sent to the
+    // recognizer is not. Reflect the detected rectangle only for the overlay.
+    const left = camera.clientWidth - (offsetX + (x + width) * scale);
+    const top = offsetY + y * scale;
+    box.style.left = `${left}px`;
+    box.style.top = `${top}px`;
+    box.style.width = `${width * scale}px`;
+    box.style.height = `${height * scale}px`;
+    const recognized =
+      result.decision === "recognized" &&
+      result.full_name &&
+      result.student_code;
+    box.classList.toggle("recognized", Boolean(recognized));
+    box.classList.toggle(
+      "label-above",
+      top + height * scale + 70 > camera.clientHeight,
+    );
+    $("scanFaceLabel").hidden = !recognized;
+    $("scanFaceName").textContent = recognized ? result.full_name : "";
+    $("scanFaceCode").textContent = recognized ? result.student_code : "";
+    box.hidden = false;
+  }
   function stopScan() {
     if (scanTimer) clearInterval(scanTimer);
     scanTimer = null;
+    lastScanResult = null;
+    if ($("scanFaceBox")) $("scanFaceBox").hidden = true;
     if ($("scanToggle")) $("scanToggle").textContent = "Bắt đầu quét";
     if ($("scanBadge")) {
       $("scanBadge").textContent = "Đã dừng";
@@ -698,6 +752,7 @@
   async function scanOnce() {
     if (scanBusy || !activeSession || !scanStream) return;
     scanBusy = true;
+    const sessionId = activeSession.session_id;
     try {
       const blob = await frameBlob($("scanVideo"), $("scanCanvas"));
       const base64 = await new Promise((resolve, reject) => {
@@ -706,15 +761,14 @@
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      const result = await json(
-        "POST",
-        `/sessions/${activeSession.session_id}/scan-frame`,
-        {
-          camera_id: "browser-camera",
-          image_base64: base64,
-          idempotency_key: crypto.randomUUID(),
-        },
-      );
+      const result = await json("POST", `/sessions/${sessionId}/scan-frame`, {
+        camera_id: "browser-camera",
+        image_base64: base64,
+        idempotency_key: crypto.randomUUID(),
+      });
+      if (!scanTimer || activeSession?.session_id !== sessionId) return;
+      lastScanResult = result;
+      renderScanFace(result);
       const message =
         result.decision === "recognized"
           ? `${result.student_code} · ${result.full_name}: ${result.message}`
@@ -735,6 +789,9 @@
     }
   }
   async function initAttendance() {
+    window.addEventListener("resize", () => {
+      if (lastScanResult) renderScanFace(lastScanResult);
+    });
     const items = await getOpenSessions();
     $("activeSession").innerHTML =
       '<option value="">Chọn buổi điểm danh</option>' +

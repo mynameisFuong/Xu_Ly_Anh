@@ -57,11 +57,15 @@
                 </div>
                 <span id="scanBadge" class="badge pending">Chưa quét</span>
               </div>
-              <div class="camera-box">
-                <video id="scanVideo" autoplay muted playsinline></video
-                ><span class="camera-hint"
-                  >Giữ khuôn mặt ở giữa khung hình</span
-                >
+              <div class="camera-box attendance-camera" id="attendanceCamera">
+                <video id="scanVideo" autoplay muted playsinline></video>
+                <div id="scanFaceBox" class="scan-face-box" hidden>
+                  <div id="scanFaceLabel" class="scan-face-label" hidden>
+                    <strong id="scanFaceName"></strong>
+                    <span id="scanFaceCode"></span>
+                  </div>
+                </div>
+                <span class="camera-hint">Giữ khuôn mặt ở giữa khung hình</span>
               </div>
               <canvas id="scanCanvas" width="640" height="480" hidden></canvas>
               <div class="actions" style="margin-top: 15px">

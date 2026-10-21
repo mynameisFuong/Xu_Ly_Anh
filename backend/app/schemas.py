@@ -230,6 +230,7 @@ class FrameScanResponse(BaseModel):
     candidate_score: float | None = None
     second_score: float | None = None
     attendance: AttendanceRead | None = None
+    face_box: tuple[int, int, int, int] | None = None
 
 
 class FaceImportItem(BaseModel):

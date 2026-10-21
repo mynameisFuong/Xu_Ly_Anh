@@ -717,7 +717,9 @@ def scan_frame(
 
     result = recognizer.extract_single_embedding(image_bytes)
     if not result.accepted:
-        return FrameScanResponse(decision="unknown", message=_localized_face_error(result.reason))
+        return FrameScanResponse(
+            decision="unknown", message=_localized_face_error(result.reason), face_box=result.face_box
+        )
 
     try:
         import numpy as np
@@ -743,7 +745,10 @@ def scan_frame(
         templates.setdefault(template.student_id, []).append(np.frombuffer(template.embedding, dtype=np.float32))
 
     if not templates:
-        return FrameScanResponse(decision="unknown", message="Lớp học chưa có mẫu khuôn mặt để nhận diện")
+        return FrameScanResponse(
+            decision="unknown", message="Lớp học chưa có mẫu khuôn mặt để nhận diện",
+            face_box=result.face_box
+        )
 
     settings = get_settings()
     match = match_embedding(
@@ -767,6 +772,7 @@ def scan_frame(
             message="Độ tin cậy chưa đủ, vui lòng nhìn thẳng vào camera",
             candidate_score=match.score,
             second_score=match.second_score,
+            face_box=result.face_box,
         )
 
     event_payload = RecognitionEventCreate(
@@ -796,6 +802,7 @@ def scan_frame(
         candidate_score=match.score,
         second_score=match.second_score,
         attendance=attendance,
+        face_box=result.face_box,
     )
 
 

@@ -23,6 +23,7 @@ class EmbeddingResult:
     quality_score: float | None = None
     reason: str | None = None
     pose: PoseResult | None = None
+    face_box: tuple[int, int, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -152,19 +153,24 @@ class FaceRecognizer:
         if len(locations) > 1:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Multiple faces detected")
         top, right, bottom, left = locations[0]
+        face_box = (left, top, right - left, bottom - top)
         quality = assess_face_quality(frame[top:bottom, left:right])
         landmarks = self._face_recognition.face_landmarks(rgb, locations, model="large")
         pose = estimate_head_pose(landmarks[0], frame.shape) if landmarks else None
         if not quality.accepted:
             return EmbeddingResult(
-                False, np.empty(0, dtype=np.float32), quality_score=quality.score, reason=quality.reason, pose=pose
+                False, np.empty(0, dtype=np.float32), quality_score=quality.score,
+                reason=quality.reason, pose=pose, face_box=face_box
             )
         encodings = self._face_recognition.face_encodings(
             rgb, locations, num_jitters=max(1, num_jitters), model="large"
         )
         if not encodings:
-            return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Cannot encode face", pose=pose)
-        return EmbeddingResult(True, encodings[0].astype(np.float32), quality.score, pose=pose)
+            return EmbeddingResult(
+                False, np.empty(0, dtype=np.float32), reason="Cannot encode face",
+                pose=pose, face_box=face_box
+            )
+        return EmbeddingResult(True, encodings[0].astype(np.float32), quality.score, pose=pose, face_box=face_box)
 
     def _extract_fallback(self, frame: np.ndarray) -> EmbeddingResult:
         faces = self.detect_faces(frame)
@@ -173,11 +179,12 @@ class FaceRecognizer:
         if len(faces) > 1:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Multiple faces detected")
         x, y, w, h = faces[0]
+        face_box = (x, y, w, h)
         face = frame[y : y + h, x : x + w]
         quality = assess_face_quality(face)
         if not quality.accepted:
-            return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason=quality.reason)
-        return EmbeddingResult(True, self._fallback_embedding(face), quality.score)
+            return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason=quality.reason, face_box=face_box)
+        return EmbeddingResult(True, self._fallback_embedding(face), quality.score, face_box=face_box)
 
     def detect_faces(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
         if self._face_recognition is not None:

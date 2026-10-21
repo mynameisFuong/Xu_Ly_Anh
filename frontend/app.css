@@ -711,6 +711,62 @@ tbody tr:hover {
 .camera-box canvas {
   display: none;
 }
+.scan-face-box {
+  position: absolute;
+  z-index: 2;
+  border: 3px solid #f2c96b;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px #1b2f3580,
+    0 0 18px #f2c96b73;
+  pointer-events: none;
+  transition:
+    left 0.18s ease,
+    top 0.18s ease,
+    width 0.18s ease,
+    height 0.18s ease;
+}
+.scan-face-box[hidden],
+.scan-face-label[hidden] {
+  display: none;
+}
+.scan-face-box.recognized {
+  border-color: #55e0bb;
+  box-shadow:
+    0 0 0 1px #1b2f3580,
+    0 0 18px #55e0bb85;
+}
+.scan-face-label {
+  position: absolute;
+  left: -3px;
+  top: calc(100% + 8px);
+  width: max-content;
+  max-width: min(280px, 75vw);
+  min-width: 120px;
+  display: grid;
+  gap: 2px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: #092f35eb;
+  color: #fff;
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 18px #061c2452;
+}
+.scan-face-box.label-above .scan-face-label {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+.scan-face-label strong {
+  font-size: 14px;
+  line-height: 1.25;
+}
+.scan-face-label span {
+  font-size: 12px;
+  color: #a6e9db;
+}
+.attendance-camera:has(.scan-face-box:not([hidden])) .camera-hint {
+  display: none;
+}
 .preview {
   min-height: 270px;
   background: #f2f7f5;

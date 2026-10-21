@@ -1,3 +1,6 @@
+import base64
+
+import numpy as np
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
@@ -12,7 +15,7 @@ from backend.app.models import (
     User,
     UserRole,
 )
-from backend.app.schemas import AttendanceManualUpdate, RecognitionEventCreate, StudentUpdate
+from backend.app.schemas import AttendanceManualUpdate, FrameScanRequest, RecognitionEventCreate, StudentUpdate
 from backend.app.api import (
     _attendance_stats_from_board,
     _attendance_request_read,
@@ -21,6 +24,7 @@ from backend.app.api import (
     delete_student,
     list_sessions,
     list_students_with_faces,
+    scan_frame,
     update_student,
 )
 from backend.app.security import hash_password
@@ -30,6 +34,7 @@ from backend.app.services.attendance import (
     open_session,
     update_attendance_manually,
 )
+from ai_pipeline.recognition import EmbeddingResult
 
 
 def build_db():
@@ -81,6 +86,26 @@ def test_recognition_event_creates_only_one_attendance_record_for_duplicate_requ
     assert len(records) == 1
     assert attendance_1.id == attendance_2.id
     assert records[0].student_id == student.id
+
+
+def test_scan_frame_returns_face_box_without_exposing_identity_for_unknown_face(monkeypatch):
+    db = build_db()
+    teacher, _student, class_ = seed(db)
+    session = open_session(db, class_id=class_.id, opened_by=teacher.id)
+
+    class FakeRecognizer:
+        model_version = "test-model"
+
+        def extract_single_embedding(self, _image_bytes):
+            return EmbeddingResult(True, np.zeros(128, dtype=np.float32), face_box=(10, 20, 70, 80))
+
+    monkeypatch.setattr("backend.app.api.build_default_recognizer", FakeRecognizer)
+    payload = FrameScanRequest(image_base64=base64.b64encode(b"frame").decode())
+    response = scan_frame(session.id, payload, teacher, db)
+    assert response.decision == "unknown"
+    assert response.face_box == (10, 20, 70, 80)
+    assert response.full_name is None
+    assert response.student_code is None
 
 
 def test_manual_update_overwrites_status_and_writes_single_record():
