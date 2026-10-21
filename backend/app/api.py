@@ -251,7 +251,7 @@ def _session_summary(db: Session, class_session: ClassSession) -> SessionSummary
 @router.get("/demo", include_in_schema=False)
 def demo_page() -> FileResponse:
     path = Path(__file__).resolve().parents[2] / "frontend" / "demo.html"
-    return FileResponse(path)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/demo/{page}", include_in_schema=False)
@@ -260,7 +260,7 @@ def demo_subpage(page: str) -> FileResponse:
     if page not in pages:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
     path = Path(__file__).resolve().parents[2] / "frontend" / f"{page}.html"
-    return FileResponse(path)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/demo/assets/{filename}", include_in_schema=False)
@@ -268,7 +268,7 @@ def demo_asset(filename: str) -> FileResponse:
     if filename not in {"app.css", "app.js"}:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
     path = Path(__file__).resolve().parents[2] / "frontend" / filename
-    return FileResponse(path)
+    return FileResponse(path, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/health")

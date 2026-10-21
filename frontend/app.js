@@ -675,10 +675,12 @@
   function renderScanFace(result) {
     const box = $("scanFaceBox");
     const video = $("scanVideo");
-    const camera = $("attendanceCamera");
+    if (!box || !video) return;
+    const camera = video.closest(".camera-box");
     const face = result?.face_box;
     if (
       !scanTimer ||
+      !camera ||
       !Array.isArray(face) ||
       face.length !== 4 ||
       !video.videoWidth
