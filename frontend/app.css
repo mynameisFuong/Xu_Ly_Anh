@@ -586,6 +586,116 @@ tbody tr:hover {
   height: 100%;
   object-fit: cover;
 }
+.enrollment-camera video,
+#scanVideo {
+  transform: scaleX(-1);
+}
+.enrollment-camera::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    #071d2170 0%,
+    transparent 23%,
+    transparent 62%,
+    #071d21ac 100%
+  );
+}
+.face-guide {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.face-guide-ring {
+  width: min(57%, 260px);
+  aspect-ratio: 0.78;
+  border: 3px solid #ffffffb8;
+  border-radius: 48%;
+  box-shadow:
+    0 0 0 8px #ffffff1f,
+    inset 0 0 0 1px #ffffff68;
+  position: relative;
+  transition:
+    border-color 0.25s,
+    box-shadow 0.25s;
+}
+.enrollment-camera.is-scanning .face-guide-ring {
+  border-color: #65e5d0;
+  box-shadow:
+    0 0 0 8px #2ccdb430,
+    0 0 30px #2ccdb44d;
+}
+.face-guide-arrow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  place-items: center;
+  width: 45px;
+  height: 45px;
+  border-radius: 50%;
+  background: #0b3439c9;
+  color: #fff;
+  font-size: 30px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.is-scanning .face-guide-arrow {
+  opacity: 1;
+}
+.enrollment-camera[data-pose="front"] .face-guide-arrow {
+  width: 20px;
+  height: 20px;
+  font-size: 18px;
+}
+.enrollment-camera[data-pose="left"] .face-guide-arrow {
+  left: 0;
+}
+.enrollment-camera[data-pose="right"] .face-guide-arrow {
+  left: 100%;
+}
+.enrollment-camera[data-pose="up"] .face-guide-arrow {
+  top: 0;
+}
+.enrollment-camera[data-pose="down"] .face-guide-arrow {
+  top: 100%;
+}
+.camera-instruction {
+  position: absolute;
+  z-index: 2;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  display: grid;
+  gap: 3px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  background: #092a30dc;
+  color: #fff;
+  text-align: center;
+  backdrop-filter: blur(8px);
+}
+.camera-instruction-step {
+  color: #91e7d9;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.camera-instruction strong {
+  font-size: 16px;
+}
+.camera-instruction > span:last-child {
+  font-size: 12px;
+  color: #e0efed;
+}
 .camera-box:has(video:not([src])) .camera-hint {
   position: absolute;
 }

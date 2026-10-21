@@ -40,11 +40,22 @@
                   <option value="">Chọn sinh viên</option>
                 </select>
               </div>
-              <div class="camera-box">
-                <video id="faceVideo" autoplay muted playsinline></video
-                ><span class="camera-hint"
-                  >Giữ khuôn mặt trong khung hình và làm theo hướng dẫn</span
-                >
+              <div class="camera-box enrollment-camera" id="enrollmentCamera">
+                <video id="faceVideo" autoplay muted playsinline></video>
+                <div class="face-guide" aria-hidden="true">
+                  <div class="face-guide-ring">
+                    <span class="face-guide-arrow" id="faceGuideArrow">●</span>
+                  </div>
+                </div>
+                <div class="camera-instruction">
+                  <span class="camera-instruction-step" id="cameraStep"
+                    >Sẵn sàng quét</span
+                  >
+                  <strong id="cameraDirection">Đưa khuôn mặt vào khung</strong>
+                  <span id="cameraFeedback"
+                    >Nhìn vào camera, giữ khuôn mặt đủ sáng.</span
+                  >
+                </div>
               </div>
               <canvas id="faceCanvas" width="640" height="480" hidden></canvas>
               <div class="actions" style="margin-top: 15px">
@@ -59,7 +70,11 @@
                 hidden
                 aria-live="polite"
               >
-                <div class="pose-list" id="poseList"></div>
+                <div
+                  class="pose-list"
+                  id="poseList"
+                  aria-label="Tiến độ quét 5 góc"
+                ></div>
                 <div class="progress-track"><span id="progressBar"></span></div>
                 <strong id="poseTitle">Nhìn thẳng</strong>
                 <p id="poseMessage">Giữ yên khuôn mặt để bắt đầu.</p>

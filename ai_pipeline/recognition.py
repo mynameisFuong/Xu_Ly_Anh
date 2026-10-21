@@ -33,17 +33,25 @@ class MatchResult:
     decision: str
 
 
-def classify_pose(yaw: float, pitch: float) -> str:
+def classify_pose(yaw: float, pitch: float, *, pitch_threshold: float = 12) -> str:
     """Map head angles to the five guided enrollment poses."""
     if yaw <= -18:
         return "left"
     if yaw >= 18:
         return "right"
-    if pitch <= -12:
+    if pitch <= -pitch_threshold:
         return "up"
-    if pitch >= 12:
+    if pitch >= pitch_threshold:
         return "down"
     return "front"
+
+
+def classify_enrollment_pose(pose: PoseResult, target_pose: str, neutral_pitch: float | None) -> str:
+    """Use the accepted front frame as the vertical reference for later poses."""
+    if neutral_pitch is None or target_pose == "front":
+        return pose.label
+    relative_pitch = pose.pitch - max(-12.0, min(12.0, neutral_pitch))
+    return classify_pose(pose.yaw, relative_pitch, pitch_threshold=8)
 
 
 def _center(points: list[tuple[int, int]]) -> tuple[float, float]:

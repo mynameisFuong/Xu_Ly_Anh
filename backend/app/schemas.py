@@ -262,6 +262,7 @@ class FaceTemplateRead(BaseModel):
 class FaceEnrollmentScanRequest(BaseModel):
     image_base64: str
     target_pose: str
+    neutral_pitch: float | None = None
 
 
 class FaceEnrollmentProgress(BaseModel):

@@ -890,7 +890,7 @@ def scan_face_enrollment(
     _user: User = Depends(require_teacher_or_admin),
     db: Session = Depends(get_db),
 ) -> FaceEnrollmentProgress:
-    from ai_pipeline.recognition import ENROLLMENT_POSES
+    from ai_pipeline.recognition import ENROLLMENT_POSES, classify_enrollment_pose
 
     if payload.target_pose not in ENROLLMENT_POSES:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Góc quét không hợp lệ")
@@ -916,7 +916,10 @@ def scan_face_enrollment(
         image_bytes,
         num_jitters=get_settings().enrollment_num_jitters,
     )
-    detected = result.pose.label if result.pose else None
+    detected = (
+        classify_enrollment_pose(result.pose, payload.target_pose, payload.neutral_pitch)
+        if result.pose else None
+    )
     captured, missing = _enrollment_progress(db, student_id)
     base_response = {
         "detected_pose": detected,

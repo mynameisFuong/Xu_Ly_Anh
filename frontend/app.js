@@ -329,27 +329,43 @@
   let enrollIndex = 0;
   let enrollTimer = null;
   let enrollBusy = false;
+  let neutralPitch = null;
   function renderEnrollment(message) {
     $("enrollProgress").hidden = false;
     $("poseList").innerHTML = poses
       .map(
         (pose, index) =>
-          `<span class="pose-step ${index < enrollIndex ? "done" : index === enrollIndex ? "active" : ""}">${index + 1}</span>`,
+          `<span class="pose-step ${index < enrollIndex ? "done" : index === enrollIndex ? "active" : ""}" title="${pose.title}" aria-label="${pose.title}: ${index < enrollIndex ? "đã quét" : index === enrollIndex ? "đang quét" : "chưa quét"}">${index < enrollIndex ? "✓" : index + 1}</span>`,
       )
       .join("");
     $("progressBar").style.width = `${Math.min(enrollIndex, 5) * 20}%`;
-    $("poseTitle").textContent =
-      enrollIndex >= 5 ? "Đăng ký hoàn tất" : poses[enrollIndex].title;
-    $("poseMessage").textContent =
-      message ||
-      (enrollIndex >= 5 ? "Đã ghi nhận đủ năm góc." : poses[enrollIndex].hint);
+    const current = poses[enrollIndex];
+    const title = current?.title || "Đăng ký hoàn tất";
+    const feedback =
+      message || (enrollIndex >= 5 ? "Đã ghi nhận đủ năm góc." : current.hint);
+    $("poseTitle").textContent = title;
+    $("poseMessage").textContent = feedback;
+    $("cameraStep").textContent =
+      enrollIndex >= 5 ? "Hoàn tất" : `Góc ${enrollIndex + 1} / 5`;
+    $("cameraDirection").textContent = title;
+    $("cameraFeedback").textContent = feedback;
+    $("faceGuideArrow").textContent =
+      { front: "●", left: "←", right: "→", up: "↑", down: "↓" }[current?.id] ||
+      "✓";
+    $("enrollmentCamera").dataset.pose = current?.id || "complete";
+    $("enrollmentCamera").classList.toggle(
+      "is-scanning",
+      Boolean(enrollStudentId) && enrollIndex < 5,
+    );
   }
   function stopEnrollment() {
     if (enrollTimer) clearInterval(enrollTimer);
     enrollTimer = null;
     enrollStudentId = null;
+    neutralPitch = null;
     $("captureFace").textContent = "Bắt đầu quét 5 góc";
     $("faceStudent").disabled = false;
+    $("enrollmentCamera").classList.remove("is-scanning");
   }
   async function scanEnrollment() {
     if (enrollBusy || !enrollStudentId || enrollIndex >= 5) return;
@@ -369,14 +385,15 @@
         {
           image_base64: canvas.toDataURL("image/jpeg", 0.88),
           target_pose: poses[enrollIndex].id,
+          neutral_pitch: neutralPitch,
         },
       );
       if (result.accepted) {
+        if (poses[enrollIndex].id === "front" && Number.isFinite(result.pitch))
+          neutralPitch = result.pitch;
         enrollIndex = result.captured_poses.length;
         renderEnrollment(
-          result.completed
-            ? "Face ID đã sẵn sàng để điểm danh."
-            : result.message,
+          result.completed ? "Face ID đã sẵn sàng để điểm danh." : null,
         );
         if (result.completed) {
           stopEnrollment();
@@ -384,7 +401,18 @@
           notify("Đã hoàn tất đăng ký Face ID 5 góc.");
         }
       } else {
-        renderEnrollment(result.message);
+        const current = poses[enrollIndex];
+        const relativePitch = result.pitch - (neutralPitch ?? 0);
+        const needsMoreTilt =
+          current.id === "up" &&
+          result.detected_pose === "front" &&
+          result.message.startsWith("Đang thấy góc") &&
+          Number.isFinite(relativePitch);
+        renderEnrollment(
+          needsMoreTilt
+            ? "Ngẩng cằm thêm một chút, mắt vẫn nhìn vào camera và giữ yên."
+            : result.message,
+        );
       }
     } catch (error) {
       stopEnrollment();
@@ -432,7 +460,7 @@
         "Trình duyệt không hỗ trợ camera hoặc trang không được mở từ localhost/HTTPS.",
       );
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480 },
+      video: { width: 640, height: 480, facingMode: "user" },
       audio: false,
     });
     $(videoId).srcObject = stream;
@@ -494,10 +522,11 @@
         await api(`/students/${id}/face-enrollment/reset`, { method: "POST" });
         enrollStudentId = id;
         enrollIndex = 0;
+        neutralPitch = null;
         $("faceStudent").disabled = true;
         $("captureFace").textContent = "Dừng quét";
         renderEnrollment();
-        enrollTimer = setInterval(scanEnrollment, 1400);
+        enrollTimer = setInterval(scanEnrollment, 1000);
         scanEnrollment();
       }),
     );
