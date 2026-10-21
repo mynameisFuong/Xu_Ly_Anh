@@ -56,6 +56,16 @@ powershell -ExecutionPolicy Bypass -File scripts\install_faceid.ps1
 
 Sau khi cài, vào **Khuôn mặt → Quét Face ID 5 góc**. Quy trình chỉ hoàn tất khi đã thu đủ năm góc nhìn đạt chất lượng. Import thư mục ảnh được giữ cho dữ liệu cũ/tham chiếu, không được xem là đăng ký Face ID hoàn chỉnh.
 
+### Cài engine Face ID trên macOS Apple Silicon
+
+Tạo `.venv` và cài hai bộ dependency như phần cài đặt ở trên, sau đó chạy:
+
+```bash
+bash scripts/install_faceid.sh
+```
+
+Script cài wheel `dlib-bin` phù hợp với Python 3.13/macOS ARM và model khuôn mặt vào `.venv`. Sau khi cài, khởi động lại backend rồi kiểm tra trang **Khuôn mặt**. `pip check` có thể báo gói `face-recognition` thiếu tên dependency `dlib`: đây là do wheel `dlib-bin` cung cấp module `dlib` dưới tên gói khác; script xác nhận engine bằng cách import và kiểm tra `supports_pose`.
+
 Mo Swagger UI tai:
 
 ```text

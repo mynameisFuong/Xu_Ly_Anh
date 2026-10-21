@@ -904,7 +904,7 @@ def scan_face_enrollment(
     if not recognizer.supports_pose:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chưa cài face_recognition. Xem hướng dẫn cài engine Face ID trong README (Python 3.11/3.12).",
+            detail="Chưa cài face_recognition. Xem hướng dẫn cài engine Face ID trong README.",
         )
     raw = payload.image_base64.split(",", 1)[-1]
     try:

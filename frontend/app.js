@@ -483,7 +483,7 @@
         const engine = await api("/face-enrollment/engine");
         if (!engine.available)
           throw new Error(
-            "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README (Python 3.11/3.12).",
+            "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README.",
           );
         if (!faceStream) faceStream = await openCamera("faceVideo");
         if (
