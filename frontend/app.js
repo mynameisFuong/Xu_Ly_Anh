@@ -802,6 +802,7 @@
       if (!scanTimer || activeSession?.session_id !== sessionId) return;
       lastScanResult = result;
       renderScanFace(result);
+      if (result.already_recorded) return;
       const message =
         result.decision === "recognized"
           ? `${result.student_code} · ${result.full_name}: ${result.message}`

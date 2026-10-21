@@ -775,6 +775,29 @@ def scan_frame(
             face_box=result.face_box,
         )
 
+    student = db.get(Student, match.student_id)
+    existing_attendance = db.scalar(
+        select(AttendanceRecord).where(
+            AttendanceRecord.session_id == session_id,
+            AttendanceRecord.student_id == match.student_id,
+        )
+    )
+    if existing_attendance is not None:
+        return FrameScanResponse(
+            decision=match.decision,
+            message="Đã điểm danh trong buổi này",
+            already_recorded=True,
+            student_id=match.student_id,
+            student_code=student.student_code if student is not None else None,
+            full_name=student.full_name if student is not None else None,
+            class_label=student.class_label if student is not None else None,
+            class_name=class_session.class_.name if class_session.class_ is not None else None,
+            candidate_score=match.score,
+            second_score=match.second_score,
+            attendance=existing_attendance,
+            face_box=result.face_box,
+        )
+
     event_payload = RecognitionEventCreate(
         camera_id=payload.camera_id,
         student_id=match.student_id,
@@ -786,7 +809,6 @@ def scan_frame(
     )
     _event, attendance = create_recognition_event(db, session_id=session_id, payload=event_payload)
     _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
-    student = db.get(Student, match.student_id)
     message = "Đúng giờ"
     if attendance is not None and attendance.status == "late":
         message = f"Trễ {attendance.late_minutes} phút"

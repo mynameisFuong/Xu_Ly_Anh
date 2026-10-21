@@ -11,6 +11,7 @@ from backend.app.models import (
     ClassEnrollment,
     ConsentStatus,
     FaceTemplate,
+    RecognitionEvent,
     Student,
     User,
     UserRole,
@@ -106,6 +107,45 @@ def test_scan_frame_returns_face_box_without_exposing_identity_for_unknown_face(
     assert response.face_box == (10, 20, 70, 80)
     assert response.full_name is None
     assert response.student_code is None
+
+
+def test_face_scan_records_each_student_once_per_session(monkeypatch):
+    db = build_db()
+    teacher, student, class_ = seed(db)
+    session = open_session(db, class_id=class_.id, opened_by=teacher.id)
+    embedding = np.zeros(128, dtype=np.float32)
+    for pose in ("front", "left", "right", "up", "down"):
+        db.add(FaceTemplate(
+            student_id=student.id,
+            embedding=embedding.tobytes(),
+            model_name="test",
+            model_version="test-model",
+            embedding_dim=128,
+            pose_label=pose,
+            is_active=True,
+        ))
+    db.commit()
+
+    class FakeRecognizer:
+        model_version = "test-model"
+        distance_metric = "euclidean"
+
+        def extract_single_embedding(self, _image_bytes):
+            return EmbeddingResult(True, embedding, face_box=(10, 20, 70, 80))
+
+    monkeypatch.setattr("backend.app.api.build_default_recognizer", FakeRecognizer)
+    monkeypatch.setattr("backend.app.api._save_attendance_evidence", lambda *_args, **_kwargs: None)
+    image = base64.b64encode(b"frame").decode()
+    first = scan_frame(session.id, FrameScanRequest(image_base64=image, idempotency_key="first"), teacher, db)
+    second = scan_frame(session.id, FrameScanRequest(image_base64=image, idempotency_key="second"), teacher, db)
+
+    assert first.decision == second.decision == "recognized"
+    assert first.already_recorded is False
+    assert second.already_recorded is True
+    assert second.student_code == student.student_code
+    assert first.attendance.id == second.attendance.id
+    assert len(db.scalars(select(AttendanceRecord)).all()) == 1
+    assert len(db.scalars(select(RecognitionEvent)).all()) == 1
 
 
 def test_manual_update_overwrites_status_and_writes_single_record():

@@ -222,6 +222,7 @@ class FrameScanRequest(BaseModel):
 class FrameScanResponse(BaseModel):
     decision: str
     message: str
+    already_recorded: bool = False
     student_id: int | None = None
     student_code: str | None = None
     full_name: str | None = None
