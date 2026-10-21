@@ -1,7 +1,11 @@
 import argparse
 import base64
+import sys
 import time
 import uuid
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
 import numpy as np

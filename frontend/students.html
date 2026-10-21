@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Sinh viên · Face Attendance</title>
+    <link rel="stylesheet" href="/demo/assets/app.css" />
+  </head>
+  <body data-page="students">
+    <div id="shell" class="layout">
+      <main class="content">
+        <div id="topbar"></div>
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <span class="eyebrow">Hồ sơ & dữ liệu</span>
+              <h1>Quản lý sinh viên</h1>
+              <p class="lede">
+                Danh sách sinh viên, lớp học và trạng thái đồng ý sử dụng dữ
+                liệu khuôn mặt.
+              </p>
+            </div>
+            <div class="head-actions">
+              <button id="newStudent" class="btn">+ Thêm sinh viên</button>
+            </div>
+          </div>
+          <div id="notice" class="notice" hidden role="status"></div>
+          <div class="grid split">
+            <section class="card">
+              <div class="card-pad">
+                <div class="card-head">
+                  <div>
+                    <h2>Danh sách sinh viên</h2>
+                    <p id="studentCount">Đang tải...</p>
+                  </div>
+                </div>
+                <div class="toolbar">
+                  <input
+                    id="studentSearch"
+                    class="search"
+                    type="search"
+                    placeholder="Tìm theo MSSV hoặc họ tên"
+                    aria-label="Tìm sinh viên"
+                  /><select
+                    id="studentFilter"
+                    class="search"
+                    aria-label="Lọc trạng thái đồng ý"
+                    style="max-width: 190px"
+                  >
+                    <option value="">Tất cả trạng thái</option>
+                    <option value="granted">Đã đồng ý</option>
+                    <option value="pending">Chờ đồng ý</option>
+                    <option value="revoked">Đã thu hồi</option>
+                  </select>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>MSSV / Họ tên</th>
+                      <th>Lớp</th>
+                      <th>Đồng ý</th>
+                      <th>Mẫu ảnh</th>
+                      <th>Thao tác</th>
+                    </tr>
+                  </thead>
+                  <tbody id="studentsTable"></tbody>
+                </table>
+              </div>
+            </section>
+            <aside class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2 id="formTitle">Thêm sinh viên</h2>
+                  <p>Thông tin cơ bản và sự đồng ý.</p>
+                </div>
+              </div>
+              <form id="studentForm">
+                <input id="editingId" type="hidden" />
+                <div class="field-row">
+                  <div class="field">
+                    <label for="studentCode">Mã số sinh viên *</label
+                    ><input
+                      id="studentCode"
+                      required
+                      maxlength="40"
+                      placeholder="VD: SV001"
+                    />
+                  </div>
+                  <div class="field">
+                    <label for="classLabel">Lớp hành chính</label
+                    ><input
+                      id="classLabel"
+                      maxlength="120"
+                      placeholder="VD: KTPM"
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="fullName">Họ và tên *</label
+                  ><input
+                    id="fullName"
+                    required
+                    maxlength="160"
+                    placeholder="Nhập họ và tên"
+                  />
+                </div>
+                <div class="field">
+                  <label for="enrollClass">Ghi danh vào lớp học</label
+                  ><select id="enrollClass">
+                    <option value="">Chưa chọn lớp</option></select
+                  ><small class="hint"
+                    >Áp dụng khi lưu hồ sơ; không xóa ghi danh cũ.</small
+                  >
+                </div>
+                <div class="field">
+                  <label for="consent">Trạng thái đồng ý</label
+                  ><select id="consent">
+                    <option value="pending">Chờ đồng ý</option>
+                    <option value="granted">Đã đồng ý</option>
+                    <option value="revoked">Đã thu hồi</option></select
+                  ><small class="hint"
+                    >Chỉ đăng ký khuôn mặt khi sinh viên đã đồng ý.</small
+                  >
+                </div>
+                <div class="actions">
+                  <button class="btn" type="submit">Lưu sinh viên</button
+                  ><button
+                    class="btn secondary"
+                    type="button"
+                    id="resetStudent"
+                  >
+                    Làm mới
+                  </button>
+                </div>
+              </form>
+            </aside>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/demo/assets/app.js" defer></script>
+  </body>
+</html>

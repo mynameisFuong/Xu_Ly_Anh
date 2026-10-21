@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Buổi học · Face Attendance</title>
+    <link rel="stylesheet" href="/demo/assets/app.css" />
+  </head>
+  <body data-page="sessions">
+    <div id="shell" class="layout">
+      <main class="content">
+        <div id="topbar"></div>
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <span class="eyebrow">Vận hành lớp học</span>
+              <h1>Buổi điểm danh</h1>
+              <p class="lede">
+                Thiết lập mốc thời gian rõ ràng trước khi điểm danh. Các buổi
+                đang mở được hiển thị bên dưới.
+              </p>
+            </div>
+          </div>
+          <div id="notice" class="notice" hidden role="status"></div>
+          <div class="grid split">
+            <section class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Mở buổi mới</h2>
+                  <p>
+                    Áp dụng giờ vào học và thời gian cho phép trễ cho cả buổi.
+                  </p>
+                </div>
+              </div>
+              <form id="sessionForm">
+                <div class="field">
+                  <label for="sessionClass">Lớp học *</label
+                  ><select id="sessionClass" required>
+                    <option value="">Chọn lớp học</option>
+                  </select>
+                </div>
+                <div class="field-row">
+                  <div class="field">
+                    <label for="period">Ca học</label
+                    ><select id="period">
+                      <option value="morning">Buổi sáng · 07:00</option>
+                      <option value="afternoon">Buổi chiều · 13:00</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="grace">Cho phép trễ (phút)</label
+                    ><input
+                      id="grace"
+                      type="number"
+                      min="0"
+                      max="180"
+                      value="0"
+                      required
+                    />
+                  </div>
+                </div>
+                <div class="field">
+                  <label for="expectedStart">Giờ vào học *</label
+                  ><input id="expectedStart" type="datetime-local" required />
+                </div>
+                <button class="btn" type="submit">Mở buổi điểm danh</button>
+              </form>
+            </section>
+            <aside class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Nguyên tắc ghi nhận</h2>
+                  <p>Giúp kết quả điểm danh nhất quán và dễ kiểm tra.</p>
+                </div>
+              </div>
+              <div class="mini-row">
+                <span>Đúng giờ</span
+                ><strong
+                  >Trước hoặc bằng giờ vào học + thời gian cho phép trễ</strong
+                >
+              </div>
+              <div class="mini-row">
+                <span>Đi trễ</span><strong>Sau mốc cho phép trễ</strong>
+              </div>
+              <div class="mini-row">
+                <span>Vắng</span><strong>Chưa ghi nhận khi đóng buổi</strong>
+              </div>
+              <div class="notice" style="margin-top: 20px">
+                Có thể sửa giờ vào học trong trang điểm danh khi buổi vẫn đang
+                mở.
+              </div>
+            </aside>
+          </div>
+          <div class="section-title">
+            <h2>Buổi đang mở</h2>
+            <button class="btn secondary small" id="refreshSessions">
+              Tải lại
+            </button>
+          </div>
+          <div class="card table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Mã buổi</th>
+                  <th>Lớp học</th>
+                  <th>Giờ vào học</th>
+                  <th>Cho phép trễ</th>
+                  <th>Sinh viên</th>
+                  <th>Thao tác</th>
+                </tr>
+              </thead>
+              <tbody id="sessionsTable"></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/demo/assets/app.js" defer></script>
+  </body>
+</html>

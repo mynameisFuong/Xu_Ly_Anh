@@ -36,7 +36,7 @@ Mo Swagger UI tai:
 http://127.0.0.1:8000/docs
 ```
 
-Mo giao dien demo camera tai:
+Mo giao dien quan tri tren trinh duyet tai:
 
 ```text
 http://127.0.0.1:8000/demo
@@ -66,17 +66,13 @@ http://127.0.0.1:8000/demo
 
 Luot test nhanh:
 
-1. Bam `Bat camera`.
-2. Trong muc `Dang ky khuon mat sinh vien`, chon sinh vien co san hoac nhap MSSV, ho ten, lop, consent roi bam `Luu sinh vien`.
-3. Dua mat vao camera va bam `Chup dang ky anh`.
-4. Hoac chon folder chua nhieu file anh sinh vien trong muc `Import folder anh sinh vien` va bam `Import folder anh`. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
-5. Bam `Tai danh sach` trong muc sinh vien de xem sinh vien da import, bam `Xem anh` de xem anh gan nhat, hoac dung `Sua`/`Xoa` de quan ly danh sach.
-6. Chon ca hoc sang 07:00 hoac chieu 13:00.
-7. Sua `Gio vao hoc` va `Cho phep tre` neu can.
-8. Bam `Mo buoi`.
-9. Bam `Bat dau quet`.
+1. Dang nhap tai `/demo/login` bang `admin / admin123`.
+2. Mo trang **Sinh vien** de them, sua va ghi nhan trang thai dong y.
+3. Mo trang **Khuon mat** de chup anh cho sinh vien da dong y, hoac nhap thu muc anh. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
+4. Mo trang **Buoi hoc**, chon lop, gio vao hoc va so phut cho phep tre, sau do mo buoi.
+5. Trang **Diem danh** cho phep bat camera, quet, xem bang diem danh, dieu chinh thu cong va xuat CSV.
 
-Bang diem danh hien ma sinh vien, ho ten, lop, thoi gian diem danh, trang thai va canh bao dung gio/tre theo cau hinh cua buoi.
+Giao dien gom cac URL rieng: `/demo` (tong quan), `/demo/students`, `/demo/faces`, `/demo/sessions`, `/demo/attendance`.
 
 ## Chay App Desktop
 

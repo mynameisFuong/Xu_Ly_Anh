@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Điểm danh · Face Attendance</title>
+    <link rel="stylesheet" href="/demo/assets/app.css" />
+  </head>
+  <body data-page="attendance">
+    <div id="shell" class="layout">
+      <main class="content">
+        <div id="topbar"></div>
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <span class="eyebrow">Điểm danh trực tiếp</span>
+              <h1>Điểm danh lớp học</h1>
+              <p class="lede">
+                Chọn buổi đang mở, bật camera và theo dõi kết quả theo thời gian
+                thực.
+              </p>
+            </div>
+            <a class="btn secondary" href="/demo/sessions">Quản lý buổi học</a>
+          </div>
+          <div id="notice" class="notice" hidden role="status"></div>
+          <div class="card card-pad" style="margin-bottom: 20px">
+            <div class="grid cols-3" style="align-items: end">
+              <div class="field" style="margin: 0">
+                <label for="activeSession">Buổi đang mở</label
+                ><select id="activeSession">
+                  <option value="">Chọn buổi điểm danh</option>
+                </select>
+              </div>
+              <div class="field" style="margin: 0">
+                <label for="policyStart">Giờ vào học</label
+                ><input id="policyStart" type="datetime-local" />
+              </div>
+              <div class="field" style="margin: 0">
+                <label for="policyGrace">Cho phép trễ (phút)</label
+                ><input id="policyGrace" type="number" min="0" max="180" />
+              </div>
+            </div>
+            <div class="actions" style="margin-top: 15px">
+              <button class="btn secondary" id="savePolicy">
+                Cập nhật quy định</button
+              ><button class="btn danger" id="closeSession">Đóng buổi</button>
+            </div>
+          </div>
+          <div class="grid split">
+            <section class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Camera nhận diện</h2>
+                  <p>
+                    Quét tự động từng khung hình khi buổi điểm danh đang mở.
+                  </p>
+                </div>
+                <span id="scanBadge" class="badge pending">Chưa quét</span>
+              </div>
+              <div class="camera-box">
+                <video id="scanVideo" autoplay muted playsinline></video
+                ><span class="camera-hint"
+                  >Giữ khuôn mặt ở giữa khung hình</span
+                >
+              </div>
+              <canvas id="scanCanvas" width="640" height="480" hidden></canvas>
+              <div class="actions" style="margin-top: 15px">
+                <button id="scanCamera" class="btn secondary">Bật camera</button
+                ><button id="scanToggle" class="btn">Bắt đầu quét</button>
+              </div>
+            </section>
+            <aside class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Kết quả buổi học</h2>
+                  <p id="sessionSubtitle">Chọn buổi để xem thống kê.</p>
+                </div>
+              </div>
+              <div class="grid cols-2" style="gap: 10px">
+                <div
+                  class="metric card"
+                  style="box-shadow: none; padding: 15px"
+                >
+                  <span class="label">Đúng giờ</span
+                  ><strong id="countPresent" class="value">—</strong>
+                </div>
+                <div
+                  class="metric card"
+                  style="box-shadow: none; padding: 15px"
+                >
+                  <span class="label">Đi trễ</span
+                  ><strong id="countLate" class="value">—</strong>
+                </div>
+                <div
+                  class="metric card"
+                  style="box-shadow: none; padding: 15px"
+                >
+                  <span class="label">Chờ điểm danh</span
+                  ><strong id="countPending" class="value">—</strong>
+                </div>
+                <div
+                  class="metric card"
+                  style="box-shadow: none; padding: 15px"
+                >
+                  <span class="label">Vắng</span
+                  ><strong id="countAbsent" class="value">—</strong>
+                </div>
+              </div>
+              <div class="section-title"><h2>Hoạt động gần đây</h2></div>
+              <ul id="scanLog" class="scan-log">
+                <li class="muted">Chưa có lượt quét trong phiên này.</li>
+              </ul>
+            </aside>
+          </div>
+          <div class="section-title">
+            <h2>Bảng điểm danh</h2>
+            <div class="head-actions">
+              <button id="refreshBoard" class="btn secondary small">
+                Làm mới</button
+              ><button id="exportCsv" class="btn secondary small">
+                Xuất CSV
+              </button>
+            </div>
+          </div>
+          <div class="card table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>MSSV / Họ tên</th>
+                  <th>Lớp</th>
+                  <th>Thời gian</th>
+                  <th>Trạng thái</th>
+                  <th>Ghi chú</th>
+                  <th>Điều chỉnh</th>
+                </tr>
+              </thead>
+              <tbody id="attendanceTable">
+                <tr>
+                  <td colspan="6" class="empty">
+                    Chọn buổi điểm danh để xem danh sách.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <dialog id="manualDialog" class="manual-dialog">
+          <form id="manualForm">
+            <span class="eyebrow">Điều chỉnh thủ công</span>
+            <h2 id="manualStudent"></h2>
+            <input id="manualStudentId" type="hidden" />
+            <div class="field">
+              <label for="manualStatus">Trạng thái</label
+              ><select id="manualStatus">
+                <option value="present">Đúng giờ</option>
+                <option value="late">Đi trễ</option>
+                <option value="absent">Vắng</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="manualReason">Lý do điều chỉnh *</label
+              ><textarea
+                id="manualReason"
+                required
+                placeholder="Ghi rõ căn cứ điều chỉnh"
+              ></textarea>
+            </div>
+            <div class="actions">
+              <button class="btn" type="submit">Lưu điều chỉnh</button
+              ><button
+                class="btn secondary"
+                type="button"
+                onclick="document.getElementById('manualDialog').close()"
+              >
+                Hủy
+              </button>
+            </div>
+          </form>
+        </dialog>
+      </main>
+    </div>
+    <script src="/demo/assets/app.js" defer></script>
+  </body>
+</html>

@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Khuôn mặt · Face Attendance</title>
+    <link rel="stylesheet" href="/demo/assets/app.css" />
+  </head>
+  <body data-page="faces">
+    <div id="shell" class="layout">
+      <main class="content">
+        <div id="topbar"></div>
+        <div class="page">
+          <div class="page-head">
+            <div>
+              <span class="eyebrow">Dữ liệu sinh trắc học</span>
+              <h1>Đăng ký khuôn mặt</h1>
+              <p class="lede">
+                Chụp một ảnh rõ mặt hoặc nhập nhiều ảnh theo mã số sinh viên.
+              </p>
+            </div>
+            <a class="btn secondary" href="/demo/students">Quản lý sinh viên</a>
+          </div>
+          <div id="notice" class="notice" hidden role="status"></div>
+          <div class="grid cols-2">
+            <section class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Chụp ảnh đăng ký</h2>
+                  <p>
+                    Chọn sinh viên đã đồng ý và đặt khuôn mặt vào khung hình.
+                  </p>
+                </div>
+              </div>
+              <div class="field">
+                <label for="faceStudent">Sinh viên</label
+                ><select id="faceStudent">
+                  <option value="">Chọn sinh viên</option>
+                </select>
+              </div>
+              <div class="camera-box">
+                <video id="faceVideo" autoplay muted playsinline></video
+                ><span class="camera-hint"
+                  >Ảnh được xử lý trên máy chủ sau khi chụp</span
+                >
+              </div>
+              <canvas id="faceCanvas" width="640" height="480" hidden></canvas>
+              <div class="actions" style="margin-top: 15px">
+                <button id="faceCamera" class="btn secondary">Bật camera</button
+                ><button id="captureFace" class="btn">Chụp và đăng ký</button>
+              </div>
+              <p class="hint">
+                Mỗi ảnh chỉ nên có một khuôn mặt, đủ sáng và nhìn thẳng.
+              </p>
+            </section>
+            <section class="card card-pad">
+              <div class="card-head">
+                <div>
+                  <h2>Nhập ảnh hàng loạt</h2>
+                  <p>
+                    Tên file bắt đầu bằng MSSV, ví dụ SV001.jpg hoặc
+                    SV001_1.jpg.
+                  </p>
+                </div>
+              </div>
+              <div class="field">
+                <label for="faceClass">Lớp học</label
+                ><select id="faceClass">
+                  <option value="">Chọn lớp học</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="faceFiles">Thư mục ảnh</label
+                ><input
+                  id="faceFiles"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  webkitdirectory
+                  directory
+                /><small class="hint"
+                  >Chọn thư mục chứa các ảnh JPEG, PNG, WebP hoặc BMP.</small
+                >
+              </div>
+              <label class="checkline" for="importConsent">
+                <input id="importConsent" type="checkbox" />
+                <span
+                  >Tôi xác nhận các sinh viên trong thư mục đã đồng ý đăng ký
+                  khuôn mặt.</span
+                >
+              </label>
+              <button id="importFaces" class="btn">Nhập ảnh</button>
+              <div
+                id="importSummary"
+                class="notice"
+                hidden
+                style="margin-top: 18px"
+              ></div>
+              <div class="section-title"><h2>Xem ảnh đã đăng ký</h2></div>
+              <div id="facePreview" class="preview">
+                <span>Chọn “Xem ảnh” ở danh sách bên dưới.</span>
+              </div>
+            </section>
+          </div>
+          <div class="section-title">
+            <h2>Trạng thái đăng ký</h2>
+            <span class="muted" id="faceCount"></span>
+          </div>
+          <div class="card">
+            <div class="card-pad">
+              <input
+                id="faceSearch"
+                class="search"
+                type="search"
+                placeholder="Tìm sinh viên"
+                aria-label="Tìm sinh viên"
+              />
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Sinh viên</th>
+                    <th>Lớp</th>
+                    <th>Đồng ý</th>
+                    <th>Số mẫu</th>
+                    <th>Ảnh gần nhất</th>
+                  </tr>
+                </thead>
+                <tbody id="facesTable"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+    <script src="/demo/assets/app.js" defer></script>
+  </body>
+</html>

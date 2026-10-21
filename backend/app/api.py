@@ -39,6 +39,7 @@ from backend.app.schemas import (
     FaceTemplateRead,
     FrameScanRequest,
     FrameScanResponse,
+    LoginRequest,
     RecognitionEventCreate,
     RecognitionEventRead,
     SessionCreate,
@@ -207,6 +208,23 @@ def demo_page() -> FileResponse:
     return FileResponse(path)
 
 
+@router.get("/demo/{page}", include_in_schema=False)
+def demo_subpage(page: str) -> FileResponse:
+    pages = {"login", "students", "faces", "sessions", "attendance"}
+    if page not in pages:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Page not found")
+    path = Path(__file__).resolve().parents[2] / "frontend" / f"{page}.html"
+    return FileResponse(path)
+
+
+@router.get("/demo/assets/{filename}", include_in_schema=False)
+def demo_asset(filename: str) -> FileResponse:
+    if filename not in {"app.css", "app.js"}:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found")
+    path = Path(__file__).resolve().parents[2] / "frontend" / filename
+    return FileResponse(path)
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -218,6 +236,11 @@ def login(username: str, password: str, db: Session = Depends(get_db)) -> dict[s
     if user is None or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     return {"user_id": user.id, "role": user.role, "full_name": user.full_name}
+
+
+@router.post("/auth/login-json")
+def login_json(payload: LoginRequest, db: Session = Depends(get_db)) -> dict[str, int | str]:
+    return login(payload.username, payload.password, db)
 
 
 @router.post("/users", response_model=UserRead, dependencies=[Depends(require_admin)])

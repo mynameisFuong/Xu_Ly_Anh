@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Đăng nhập · Face Attendance</title>
+    <link rel="stylesheet" href="/demo/assets/app.css" />
+  </head>
+  <body data-page="login">
+    <div class="login-screen">
+      <aside class="login-art">
+        <div class="brand">
+          <span class="brand-mark">FA</span
+          ><span
+            ><strong>Face Attendance</strong
+            ><small>Hệ thống điểm danh</small></span
+          >
+        </div>
+        <div>
+          <div class="decor"></div>
+          <span class="eyebrow" style="color: #78d5c5">Quản lý điểm danh</span>
+          <h1>Một không gian rõ ràng cho mỗi bước vận hành.</h1>
+          <p>
+            Quản lý sinh viên, dữ liệu khuôn mặt và buổi học trong cùng một hệ
+            thống.
+          </p>
+        </div>
+        <small style="color: #9dbfba">Face Attendance MVP · Chạy nội bộ</small>
+      </aside>
+      <main class="login-main">
+        <div class="login-card">
+          <span class="eyebrow">Chào mừng trở lại</span>
+          <h1>Đăng nhập</h1>
+          <p class="lede" style="margin-bottom: 30px">
+            Sử dụng tài khoản quản trị để truy cập giao diện demo.
+          </p>
+          <form id="loginForm">
+            <div class="field">
+              <label for="username">Tên đăng nhập</label
+              ><input
+                id="username"
+                name="username"
+                autocomplete="username"
+                required
+                placeholder="Nhập tên đăng nhập"
+              />
+            </div>
+            <div class="field">
+              <label for="password">Mật khẩu</label
+              ><input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                placeholder="Nhập mật khẩu"
+              />
+            </div>
+            <div
+              id="notice"
+              class="notice"
+              hidden
+              role="alert"
+              style="margin-bottom: 15px"
+            ></div>
+            <button class="btn" type="submit">Đăng nhập vào hệ thống</button>
+          </form>
+          <p class="login-foot">
+            Tài khoản demo: <strong>admin</strong> / <strong>admin123</strong>
+          </p>
+        </div>
+      </main>
+    </div>
+    <script src="/demo/assets/app.js" defer></script>
+  </body>
+</html>
