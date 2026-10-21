@@ -78,8 +78,17 @@ def main() -> None:
             match = match_embedding(
                 embedding,
                 templates,
-                threshold=settings.attendance_threshold,
-                margin=settings.attendance_margin,
+                threshold=(
+                    settings.face_distance_threshold
+                    if recognizer.distance_metric == "euclidean"
+                    else settings.attendance_threshold
+                ),
+                margin=(
+                    settings.face_distance_margin
+                    if recognizer.distance_metric == "euclidean"
+                    else settings.attendance_margin
+                ),
+                metric=recognizer.distance_metric,
             )
             x, y, w, h = box
             color = (0, 255, 0) if match.decision == "recognized" else (0, 165, 255)

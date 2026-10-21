@@ -87,6 +87,8 @@ def register_face_bytes(
     image_bytes: bytes,
     filename: str,
     recognizer,
+    pose_label: str | None = None,
+    extracted_result=None,
 ) -> FaceTemplate:
     student = db.get(Student, student_id)
     if student is None:
@@ -94,7 +96,7 @@ def register_face_bytes(
     if student.consent_status != ConsentStatus.GRANTED.value:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Student consent is not granted")
 
-    result = recognizer.extract_single_embedding(image_bytes)
+    result = extracted_result or recognizer.extract_single_embedding(image_bytes)
     if not result.accepted:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.reason)
 
@@ -113,6 +115,7 @@ def register_face_bytes(
         embedding_dim=int(result.embedding.shape[0]),
         image_path=str(image_path),
         quality_score=result.quality_score,
+        pose_label=pose_label,
         is_active=True,
     )
     db.add(template)

@@ -1,6 +1,7 @@
 import csv
 import base64
 import uuid
+from datetime import datetime, time, timezone
 from io import BytesIO, StringIO
 from pathlib import Path
 
@@ -34,6 +35,9 @@ from backend.app.schemas import (
     AttendanceStatsRead,
     ClassCreate,
     ClassRead,
+    DashboardSummaryRead,
+    FaceEnrollmentProgress,
+    FaceEnrollmentScanRequest,
     FaceImportItem,
     FaceImportResponse,
     FaceTemplateRead,
@@ -44,6 +48,7 @@ from backend.app.schemas import (
     SessionCreate,
     SessionPolicyUpdate,
     SessionRead,
+    SessionSummaryRead,
     StudentFaceSummary,
     StudentCreate,
     StudentRead,
@@ -68,8 +73,27 @@ from backend.app.services.attendance import (
     update_attendance_manually,
 )
 from backend.app.services.face_templates import build_default_recognizer, register_face_bytes, register_face_image
+from backend.app.services.audit import write_audit
 
 router = APIRouter()
+
+
+def _localized_face_error(reason: str | None) -> str:
+    text = reason or "Không thể phân tích khuôn mặt"
+    translations = {
+        "No face detected": "Không phát hiện khuôn mặt",
+        "Multiple faces detected": "Chỉ cho phép một khuôn mặt trong khung hình",
+        "Cannot decode image": "Không đọc được dữ liệu ảnh",
+        "Empty face crop": "Vùng khuôn mặt không hợp lệ",
+        "Face is too small": "Khuôn mặt quá nhỏ, vui lòng tiến gần camera",
+        "Image is too dark": "Khung hình quá tối, vui lòng tăng ánh sáng",
+        "Image is overexposed": "Khung hình quá sáng, vui lòng điều chỉnh ánh sáng",
+        "Image is blurry": "Ảnh bị mờ, vui lòng giữ yên khuôn mặt",
+    }
+    for prefix, message in translations.items():
+        if text.startswith(prefix):
+            return message
+    return text
 
 
 def _attendance_evidence_url(attendance: AttendanceRecord | None) -> str | None:
@@ -121,17 +145,17 @@ def _build_attendance_board(db: Session, class_session: ClassSession) -> Attenda
                     source=None,
                     recorded_at=None,
                     late_minutes=0,
-                    alert="Chua diem danh",
+                    alert="Chưa điểm danh",
                 )
             )
             continue
 
         if attendance.status == "late":
-            alert = f"Tre {attendance.late_minutes} phut"
+            alert = f"Trễ {attendance.late_minutes} phút"
         elif attendance.status == "present":
-            alert = "Dung gio"
+            alert = "Đúng giờ"
         elif attendance.status == "absent":
-            alert = "Vang"
+            alert = "Vắng"
         else:
             alert = attendance.status
         board_rows.append(
@@ -201,6 +225,28 @@ def _attendance_request_read(db: Session, class_session: ClassSession) -> Attend
     )
 
 
+def _session_summary(db: Session, class_session: ClassSession) -> SessionSummaryRead:
+    class_ = db.get(Class, class_session.class_id)
+    stats = _attendance_stats_from_board(_build_attendance_board(db, class_session))
+    attended = stats.present_count + stats.late_count
+    return SessionSummaryRead(
+        id=class_session.id,
+        class_id=class_session.class_id,
+        class_code=class_.code if class_ else "",
+        class_name=class_.name if class_ else "",
+        teacher_name=class_.teacher_display_name if class_ else None,
+        start_time=class_session.start_time,
+        expected_start_time=class_session.expected_start_time,
+        end_time=class_session.end_time,
+        status=class_session.status,
+        total_students=stats.total_students,
+        present_count=stats.present_count,
+        late_count=stats.late_count,
+        absent_count=stats.absent_count,
+        attendance_rate=round(attended * 100 / stats.total_students, 2) if stats.total_students else 0.0,
+    )
+
+
 @router.get("/demo", include_in_schema=False)
 def demo_page() -> FileResponse:
     path = Path(__file__).resolve().parents[2] / "frontend" / "demo.html"
@@ -210,6 +256,59 @@ def demo_page() -> FileResponse:
 @router.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/dashboard/summary", response_model=DashboardSummaryRead)
+def dashboard_summary(
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> DashboardSummaryRead:
+    total_students = db.scalar(select(func.count(Student.id)).where(Student.deleted_at.is_(None))) or 0
+    completed_enrollments = (
+        select(FaceTemplate.student_id)
+        .join(Student, Student.id == FaceTemplate.student_id)
+        .where(
+            FaceTemplate.is_active.is_(True),
+            FaceTemplate.pose_label.is_not(None),
+            Student.deleted_at.is_(None),
+        )
+        .group_by(FaceTemplate.student_id)
+        .having(func.count(func.distinct(FaceTemplate.pose_label)) >= 5)
+        .subquery()
+    )
+    enrolled_students = db.scalar(select(func.count()).select_from(completed_enrollments)) or 0
+    active_classes = db.scalar(select(func.count(Class.id))) or 0
+    open_sessions = db.scalar(
+        select(func.count(ClassSession.id)).where(ClassSession.status == SessionStatus.OPEN.value)
+    ) or 0
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min, tzinfo=timezone.utc)
+    attendance_today = db.scalar(
+        select(func.count(AttendanceRecord.id)).where(AttendanceRecord.recorded_at >= today_start)
+    ) or 0
+    expected_today = db.scalar(
+        select(func.count(ClassEnrollment.id))
+        .join(ClassSession, ClassSession.class_id == ClassEnrollment.class_id)
+        .where(ClassSession.start_time >= today_start)
+    ) or 0
+    return DashboardSummaryRead(
+        total_students=total_students,
+        enrolled_students=enrolled_students,
+        active_classes=active_classes,
+        open_sessions=open_sessions,
+        attendance_today=attendance_today,
+        attendance_rate_today=round(attendance_today * 100 / expected_today, 2) if expected_today else 0.0,
+    )
+
+
+@router.get("/sessions", response_model=list[SessionSummaryRead])
+def list_sessions(
+    limit: int = 20,
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> list[SessionSummaryRead]:
+    safe_limit = max(1, min(limit, 100))
+    sessions = db.scalars(select(ClassSession).order_by(ClassSession.start_time.desc()).limit(safe_limit)).all()
+    return [_session_summary(db, item) for item in sessions]
 
 
 @router.post("/auth/login")
@@ -310,6 +409,7 @@ def list_students_with_faces(
             .order_by(FaceTemplate.created_at.desc())
         ).all()
         latest = templates[0] if templates else None
+        captured_poses = {item.pose_label for item in templates if item.pose_label is not None}
         summaries.append(
             StudentFaceSummary(
                 id=student.id,
@@ -318,6 +418,8 @@ def list_students_with_faces(
                 class_label=student.class_label,
                 consent_status=student.consent_status,
                 face_template_count=len(templates),
+                captured_pose_count=len(captured_poses),
+                enrollment_complete=len(captured_poses) == 5,
                 latest_image_path=latest.image_path if latest is not None else None,
                 latest_image_url=f"/admin/face-templates/{latest.id}/image" if latest is not None else None,
             )
@@ -592,7 +694,7 @@ def scan_frame(
 
     result = recognizer.extract_single_embedding(image_bytes)
     if not result.accepted:
-        return FrameScanResponse(decision="unknown", message=result.reason or "Cannot extract face")
+        return FrameScanResponse(decision="unknown", message=_localized_face_error(result.reason))
 
     try:
         import numpy as np
@@ -610,6 +712,7 @@ def scan_frame(
             ClassEnrollment.class_id == class_session.class_id,
             FaceTemplate.is_active.is_(True),
             FaceTemplate.model_version == recognizer.model_version,
+            FaceTemplate.student_id.in_(_completed_face_students()),
         )
     ).scalars()
     templates: dict[int, list[np.ndarray]] = {}
@@ -617,19 +720,28 @@ def scan_frame(
         templates.setdefault(template.student_id, []).append(np.frombuffer(template.embedding, dtype=np.float32))
 
     if not templates:
-        return FrameScanResponse(decision="unknown", message="No face templates registered for this class")
+        return FrameScanResponse(decision="unknown", message="Lớp học chưa có mẫu khuôn mặt để nhận diện")
 
     settings = get_settings()
     match = match_embedding(
         result.embedding,
         templates,
-        threshold=settings.attendance_threshold,
-        margin=settings.attendance_margin,
+        threshold=(
+            settings.face_distance_threshold
+            if recognizer.distance_metric == "euclidean"
+            else settings.attendance_threshold
+        ),
+        margin=(
+            settings.face_distance_margin
+            if recognizer.distance_metric == "euclidean"
+            else settings.attendance_margin
+        ),
+        metric=recognizer.distance_metric,
     )
     if match.student_id is None:
         return FrameScanResponse(
             decision=match.decision,
-            message="Face is not confident enough",
+            message="Độ tin cậy chưa đủ, vui lòng nhìn thẳng vào camera",
             candidate_score=match.score,
             second_score=match.second_score,
         )
@@ -646,9 +758,9 @@ def scan_frame(
     _event, attendance = create_recognition_event(db, session_id=session_id, payload=event_payload)
     _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
     student = db.get(Student, match.student_id)
-    message = "Dung gio"
+    message = "Đúng giờ"
     if attendance is not None and attendance.status == "late":
-        message = f"Tre {attendance.late_minutes} phut"
+        message = f"Trễ {attendance.late_minutes} phút"
 
     return FrameScanResponse(
         decision=match.decision,
@@ -690,6 +802,145 @@ def register_face_template(
 ) -> object:
     recognizer = build_default_recognizer()
     return register_face_image(db, student_id=student_id, file=file, recognizer=recognizer)
+
+
+def _enrollment_progress(db: Session, student_id: int) -> tuple[list[str], list[str]]:
+    from ai_pipeline.recognition import ENROLLMENT_POSES
+
+    captured = set(
+        db.scalars(
+            select(FaceTemplate.pose_label).where(
+                FaceTemplate.student_id == student_id,
+                FaceTemplate.is_active.is_(True),
+                FaceTemplate.pose_label.is_not(None),
+            )
+        ).all()
+    )
+    ordered = [pose for pose in ENROLLMENT_POSES if pose in captured]
+    return ordered, [pose for pose in ENROLLMENT_POSES if pose not in captured]
+
+
+def _completed_face_students():
+    return (
+        select(FaceTemplate.student_id)
+        .where(FaceTemplate.is_active.is_(True), FaceTemplate.pose_label.is_not(None))
+        .group_by(FaceTemplate.student_id)
+        .having(func.count(func.distinct(FaceTemplate.pose_label)) >= 5)
+    )
+
+
+@router.post("/students/{student_id}/face-enrollment/reset", status_code=status.HTTP_204_NO_CONTENT)
+def reset_face_enrollment(
+    student_id: int,
+    user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> Response:
+    student = db.get(Student, student_id)
+    if student is None or student.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy sinh viên")
+    changed = db.query(FaceTemplate).filter(
+        FaceTemplate.student_id == student_id,
+        FaceTemplate.is_active.is_(True),
+    ).update({"is_active": False})
+    write_audit(
+        db,
+        actor_user_id=user.id,
+        action="face_enrollment.reset",
+        entity_type="Student",
+        entity_id=student_id,
+        after={"templates_deactivated": changed},
+    )
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/students/{student_id}/face-enrollment/scan", response_model=FaceEnrollmentProgress)
+def scan_face_enrollment(
+    student_id: int,
+    payload: FaceEnrollmentScanRequest,
+    _user: User = Depends(require_teacher_or_admin),
+    db: Session = Depends(get_db),
+) -> FaceEnrollmentProgress:
+    from ai_pipeline.recognition import ENROLLMENT_POSES
+
+    if payload.target_pose not in ENROLLMENT_POSES:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Góc quét không hợp lệ")
+    student = db.get(Student, student_id)
+    if student is None or student.deleted_at is not None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy sinh viên")
+    if student.consent_status != ConsentStatus.GRANTED.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sinh viên chưa đồng ý sử dụng Face ID")
+
+    recognizer = build_default_recognizer()
+    if not recognizer.supports_pose:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chưa cài face_recognition. Hãy cài requirements-faceid.txt bằng Python 3.11/3.12.",
+        )
+    raw = payload.image_base64.split(",", 1)[-1]
+    try:
+        image_bytes = base64.b64decode(raw, validate=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Dữ liệu ảnh không hợp lệ") from exc
+
+    result = recognizer.extract_single_embedding(
+        image_bytes,
+        num_jitters=get_settings().enrollment_num_jitters,
+    )
+    detected = result.pose.label if result.pose else None
+    captured, missing = _enrollment_progress(db, student_id)
+    base_response = {
+        "detected_pose": detected,
+        "target_pose": payload.target_pose,
+        "yaw": result.pose.yaw if result.pose else None,
+        "pitch": result.pose.pitch if result.pose else None,
+        "captured_poses": captured,
+        "missing_poses": missing,
+        "progress_percent": len(captured) * 20,
+        "completed": not missing,
+        "engine": recognizer.model_name,
+    }
+    if not result.accepted:
+        return FaceEnrollmentProgress(accepted=False, message=_localized_face_error(result.reason), **base_response)
+    if detected != payload.target_pose:
+        names = {"front": "chính diện", "left": "trái", "right": "phải", "up": "lên trên", "down": "xuống dưới"}
+        return FaceEnrollmentProgress(
+            accepted=False,
+            message=f"Đang thấy góc {names.get(detected, detected)}; hãy giữ đúng hướng yêu cầu",
+            **base_response,
+        )
+
+    existing = db.scalar(
+        select(FaceTemplate).where(
+            FaceTemplate.student_id == student_id,
+            FaceTemplate.pose_label == payload.target_pose,
+            FaceTemplate.is_active.is_(True),
+        )
+    )
+    if existing is None:
+        register_face_bytes(
+            db,
+            student_id=student_id,
+            image_bytes=image_bytes,
+            filename=f"faceid-{payload.target_pose}-{uuid.uuid4()}.jpg",
+            recognizer=recognizer,
+            pose_label=payload.target_pose,
+            extracted_result=result,
+        )
+    captured, missing = _enrollment_progress(db, student_id)
+    return FaceEnrollmentProgress(
+        accepted=True,
+        message="Đã ghi nhận góc khuôn mặt",
+        detected_pose=detected,
+        target_pose=payload.target_pose,
+        yaw=result.pose.yaw if result.pose else None,
+        pitch=result.pose.pitch if result.pose else None,
+        captured_poses=captured,
+        missing_poses=missing,
+        progress_percent=len(captured) * 20,
+        completed=not missing,
+        engine=recognizer.model_name,
+    )
 
 
 def _student_code_from_filename(filename: str) -> str | None:
@@ -787,6 +1038,7 @@ def list_class_face_templates(class_id: int, db: Session = Depends(get_db)) -> l
         .where(
             ClassEnrollment.class_id == class_id,
             FaceTemplate.is_active.is_(True),
+            FaceTemplate.student_id.in_(_completed_face_students()),
         )
     ).scalars()
     return [

@@ -13,7 +13,16 @@ from backend.app.models import (
     UserRole,
 )
 from backend.app.schemas import AttendanceManualUpdate, RecognitionEventCreate, StudentUpdate
-from backend.app.api import _attendance_stats_from_board, _build_attendance_board, delete_student, update_student
+from backend.app.api import (
+    _attendance_stats_from_board,
+    _attendance_request_read,
+    _build_attendance_board,
+    dashboard_summary,
+    delete_student,
+    list_sessions,
+    list_students_with_faces,
+    update_student,
+)
 from backend.app.security import hash_password
 from backend.app.services.attendance import (
     close_session,
@@ -193,3 +202,58 @@ def test_admin_can_update_and_soft_delete_student():
 
     assert student.deleted_at is not None
     assert template.is_active is False
+
+
+def test_dashboard_and_session_history_reflect_operational_data():
+    db = build_db()
+    teacher, student, class_ = seed(db)
+    session = open_session(db, class_id=class_.id, opened_by=teacher.id)
+    update_attendance_manually(
+        db,
+        session_id=session.id,
+        student_id=student.id,
+        actor_user_id=teacher.id,
+        payload=AttendanceManualUpdate(status="present", reason="Demo check-in"),
+    )
+
+    summary = dashboard_summary(teacher, db)
+    history = list_sessions(20, teacher, db)
+
+    assert summary.total_students == 1
+    assert summary.active_classes == 1
+    assert summary.open_sessions == 1
+    assert len(history) == 1
+    assert history[0].class_code == "C001"
+    assert history[0].attendance_rate == 100.0
+    assert _attendance_request_read(db, session).student_count == 1
+
+
+def test_faceid_status_requires_all_five_distinct_poses():
+    db = build_db()
+    teacher, student, _class = seed(db)
+    for pose in ("front", "left", "right", "up"):
+        db.add(FaceTemplate(
+            student_id=student.id,
+            embedding=b"test",
+            model_name="test",
+            model_version="test",
+            embedding_dim=1,
+            pose_label=pose,
+            is_active=True,
+        ))
+    db.commit()
+    assert dashboard_summary(teacher, db).enrolled_students == 0
+    assert list_students_with_faces(teacher, db)[0].enrollment_complete is False
+
+    db.add(FaceTemplate(
+        student_id=student.id,
+        embedding=b"test",
+        model_name="test",
+        model_version="test",
+        embedding_dim=1,
+        pose_label="down",
+        is_active=True,
+    ))
+    db.commit()
+    assert dashboard_summary(teacher, db).enrolled_students == 1
+    assert list_students_with_faces(teacher, db)[0].enrollment_complete is True

@@ -10,9 +10,9 @@ def create_app() -> FastAPI:
     settings.storage_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(
-        title="Face Attendance MVP",
-        version="0.1.0",
-        description="Local-first face attendance system for one-camera MVP.",
+        title="AttendAI - Face Attendance API",
+        version="1.0.0-demo",
+        description="Hệ thống điểm danh lớp học bằng nhận diện khuôn mặt.",
     )
     app.include_router(router)
 

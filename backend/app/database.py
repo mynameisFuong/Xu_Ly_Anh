@@ -43,6 +43,7 @@ def _apply_sqlite_light_migrations() -> None:
     class_columns = {column["name"] for column in inspector.get_columns("classes")}
     session_columns = {column["name"] for column in inspector.get_columns("class_sessions")}
     attendance_columns = {column["name"] for column in inspector.get_columns("attendance_records")}
+    face_columns = {column["name"] for column in inspector.get_columns("face_templates")}
     statements: list[str] = []
     if "teacher_display_name" not in class_columns:
         statements.append("ALTER TABLE classes ADD COLUMN teacher_display_name VARCHAR(160)")
@@ -56,6 +57,8 @@ def _apply_sqlite_light_migrations() -> None:
         statements.append("ALTER TABLE attendance_records ADD COLUMN late_minutes INTEGER NOT NULL DEFAULT 0")
     if "evidence_image_path" not in attendance_columns:
         statements.append("ALTER TABLE attendance_records ADD COLUMN evidence_image_path VARCHAR(255)")
+    if "pose_label" not in face_columns:
+        statements.append("ALTER TABLE face_templates ADD COLUMN pose_label VARCHAR(20)")
 
     if not statements:
         return

@@ -144,6 +144,7 @@ class FaceTemplate(Base):
     embedding_dim: Mapped[int] = mapped_column(Integer)
     image_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pose_label: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
