@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     attendance_margin: float = 0.05
     attendance_min_hits: int = 3
     attendance_window_seconds: int = 4
+    face_distance_threshold: float = 0.52
+    face_distance_margin: float = 0.04
+    enrollment_num_jitters: int = 3
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

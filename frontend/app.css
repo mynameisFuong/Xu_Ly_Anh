@@ -850,3 +850,62 @@ tbody tr:hover {
   letter-spacing: 0.025em;
   white-space: nowrap;
 }
+.enroll-progress {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: #f7fbf9;
+  border-radius: 11px;
+}
+.enroll-progress[hidden] {
+  display: none;
+}
+.pose-list {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 13px;
+}
+.pose-step {
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border: 2px solid #bed4d0;
+  border-radius: 50%;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.pose-step.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 0 3px var(--mint);
+}
+.pose-step.done {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.progress-track {
+  height: 6px;
+  border-radius: 9px;
+  background: #dceae6;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.progress-track span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.25s;
+}
+.enroll-progress strong {
+  display: block;
+}
+.enroll-progress p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0 0;
+}

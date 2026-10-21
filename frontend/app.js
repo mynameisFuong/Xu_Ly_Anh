@@ -172,7 +172,7 @@
     ]);
     $("mStudents").textContent = students.length;
     $("mFaces").textContent = faces.filter(
-      (item) => item.face_template_count > 0,
+      (item) => item.enrollment_complete,
     ).length;
     $("mClasses").textContent = classes.length;
     $("mSessions").textContent = sessions.length;
@@ -211,7 +211,7 @@
       ? filtered
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.face_template_count}</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.captured_pose_count}/5 góc</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> <a class="btn secondary small" href="/demo/faces?student=${item.id}">Quét Face ID</a> <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -310,6 +310,89 @@
   let faceStudents = [],
     faceStream = null,
     faceUrl = null;
+  const poses = [
+    { id: "front", title: "Nhìn thẳng", hint: "Nhìn vào camera và giữ yên." },
+    {
+      id: "left",
+      title: "Quay sang trái",
+      hint: "Quay đầu sang trái và giữ yên.",
+    },
+    {
+      id: "right",
+      title: "Quay sang phải",
+      hint: "Quay đầu sang phải và giữ yên.",
+    },
+    { id: "up", title: "Ngẩng lên", hint: "Hơi ngẩng cằm và giữ yên." },
+    { id: "down", title: "Cúi xuống", hint: "Hơi cúi cằm và giữ yên." },
+  ];
+  let enrollStudentId = null;
+  let enrollIndex = 0;
+  let enrollTimer = null;
+  let enrollBusy = false;
+  function renderEnrollment(message) {
+    $("enrollProgress").hidden = false;
+    $("poseList").innerHTML = poses
+      .map(
+        (pose, index) =>
+          `<span class="pose-step ${index < enrollIndex ? "done" : index === enrollIndex ? "active" : ""}">${index + 1}</span>`,
+      )
+      .join("");
+    $("progressBar").style.width = `${Math.min(enrollIndex, 5) * 20}%`;
+    $("poseTitle").textContent =
+      enrollIndex >= 5 ? "Đăng ký hoàn tất" : poses[enrollIndex].title;
+    $("poseMessage").textContent =
+      message ||
+      (enrollIndex >= 5 ? "Đã ghi nhận đủ năm góc." : poses[enrollIndex].hint);
+  }
+  function stopEnrollment() {
+    if (enrollTimer) clearInterval(enrollTimer);
+    enrollTimer = null;
+    enrollStudentId = null;
+    $("captureFace").textContent = "Bắt đầu quét 5 góc";
+    $("faceStudent").disabled = false;
+  }
+  async function scanEnrollment() {
+    if (enrollBusy || !enrollStudentId || enrollIndex >= 5) return;
+    enrollBusy = true;
+    try {
+      const video = $("faceVideo"),
+        canvas = $("faceCanvas");
+      if (!video.videoWidth) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas
+        .getContext("2d")
+        .drawImage(video, 0, 0, canvas.width, canvas.height);
+      const result = await json(
+        "POST",
+        `/students/${enrollStudentId}/face-enrollment/scan`,
+        {
+          image_base64: canvas.toDataURL("image/jpeg", 0.88),
+          target_pose: poses[enrollIndex].id,
+        },
+      );
+      if (result.accepted) {
+        enrollIndex = result.captured_poses.length;
+        renderEnrollment(
+          result.completed
+            ? "Face ID đã sẵn sàng để điểm danh."
+            : result.message,
+        );
+        if (result.completed) {
+          stopEnrollment();
+          await reloadFaces();
+          notify("Đã hoàn tất đăng ký Face ID 5 góc.");
+        }
+      } else {
+        renderEnrollment(result.message);
+      }
+    } catch (error) {
+      stopEnrollment();
+      notify(error.message, "error");
+    } finally {
+      enrollBusy = false;
+    }
+  }
   function renderFaces() {
     const query = $("faceSearch").value.trim().toLocaleLowerCase("vi-VN");
     const items = faceStudents.filter((item) =>
@@ -318,12 +401,12 @@
         .includes(query),
     );
     $("faceCount").textContent =
-      `${faceStudents.filter((x) => x.face_template_count > 0).length} / ${faceStudents.length} sinh viên có mẫu`;
+      `${faceStudents.filter((x) => x.enrollment_complete).length} / ${faceStudents.length} sinh viên hoàn tất Face ID`;
     $("facesTable").innerHTML = items.length
       ? items
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.face_template_count}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.enrollment_complete ? '<span class="badge present">Hoàn tất</span>' : `${item.captured_pose_count}/5 góc`}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -374,6 +457,10 @@
         )
         .join("");
     await reloadFaces();
+    const requestedStudent = new URLSearchParams(location.search).get(
+      "student",
+    );
+    if (requestedStudent) $("faceStudent").value = requestedStudent;
     $("faceSearch").addEventListener("input", renderFaces);
     $("faceCamera").addEventListener(
       "click",
@@ -385,18 +472,33 @@
     $("captureFace").addEventListener(
       "click",
       run(async () => {
+        if (enrollTimer) {
+          stopEnrollment();
+          renderEnrollment("Đã tạm dừng. Bắt đầu lại sẽ xóa các góc vừa quét.");
+          return;
+        }
         const id = $("faceStudent").value;
-        if (!id) throw new Error("Chọn sinh viên đã đồng ý trước khi chụp.");
+        if (!id) throw new Error("Chọn sinh viên đã đồng ý trước khi quét.");
+        const student = faceStudents.find((item) => item.id === Number(id));
+        const engine = await api("/face-enrollment/engine");
+        if (!engine.available)
+          throw new Error(
+            "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README (Python 3.11/3.12).",
+          );
         if (!faceStream) faceStream = await openCamera("faceVideo");
-        const blob = await frameBlob($("faceVideo"), $("faceCanvas"));
-        const form = new FormData();
-        form.append("file", blob, `student-${id}.jpg`);
-        await api(`/students/${id}/face-templates`, {
-          method: "POST",
-          body: form,
-        });
-        await reloadFaces();
-        notify("Đã đăng ký ảnh khuôn mặt.");
+        if (
+          student?.face_template_count &&
+          !confirm("Quét lại sẽ vô hiệu hóa các mẫu khuôn mặt cũ. Tiếp tục?")
+        )
+          return;
+        await api(`/students/${id}/face-enrollment/reset`, { method: "POST" });
+        enrollStudentId = id;
+        enrollIndex = 0;
+        $("faceStudent").disabled = true;
+        $("captureFace").textContent = "Dừng quét";
+        renderEnrollment();
+        enrollTimer = setInterval(scanEnrollment, 1400);
+        scanEnrollment();
       }),
     );
     $("importFaces").addEventListener(
@@ -452,6 +554,7 @@
       }),
     );
     window.addEventListener("pagehide", () => {
+      stopEnrollment();
       faceStream?.getTracks().forEach((track) => track.stop());
       if (faceUrl) URL.revokeObjectURL(faceUrl);
     });

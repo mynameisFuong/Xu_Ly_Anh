@@ -1,4 +1,20 @@
-# Face Attendance MVP
+# AttendAI — Hệ thống điểm danh bằng khuôn mặt
+
+Hệ thống điểm danh lớp học local-first với giao diện quản trị chuyên nghiệp, nhận diện khuôn mặt qua webcam, quản lý sinh viên/Face ID, chốt đúng giờ–đi trễ–vắng và xuất báo cáo Excel/CSV.
+
+## Điểm nổi bật của bản demo
+
+- Dashboard vận hành: số sinh viên, độ phủ Face ID, lớp học, phiên đang mở và tỷ lệ tham dự.
+- Kiosk điểm danh trực tiếp: camera, hướng dẫn chất lượng, nhận diện liên tục và bảng kết quả realtime.
+- Tiếp tục phiên đang mở sau khi tải lại trang, chống ghi trùng bằng idempotency và unique constraint.
+- Quản lý hồ sơ, trạng thái đồng ý sinh trắc học, đăng ký từng ảnh hoặc import cả thư mục.
+- Đăng ký Face ID đa góc theo năm tư thế: chính diện, trái, phải, lên và xuống.
+- Engine mã nguồn mở `ageitgey/face_recognition` + dlib ResNet, lưu năm vector 128 chiều cho mỗi sinh viên.
+- Nhận diện realtime bằng khoảng cách Euclidean, lấy mẫu gần nhất theo từng người và kiểm tra margin người thứ hai.
+- Chấm đúng giờ/đi trễ theo chính sách từng phiên; tự đánh dấu vắng khi kết thúc.
+- Lịch sử phiên, ảnh minh chứng, audit cho cập nhật thủ công và báo cáo Excel/CSV.
+
+> Đây là bản demo học thuật chạy local. Xem `docs/DECISIONS.md` để biết các hạng mục cần nâng cấp trước production.
 
 MVP cho he thong nhan dien khuon mat va diem danh tu dong. Thiet ke uu tien chay local tren Windows, CPU, de debug cho junior.
 
@@ -29,6 +45,16 @@ python scripts/init_db.py
 python scripts/seed_demo.py
 uvicorn backend.app.main:app --reload
 ```
+
+### Cài engine Face ID trên Windows
+
+Chạy một lần trong virtualenv. Script dùng wheel `dlib-bin` để tránh phải biên dịch dlib:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install_faceid.ps1
+```
+
+Sau khi cài, vào **Khuôn mặt → Quét Face ID 5 góc**. Quy trình chỉ hoàn tất khi đã thu đủ năm góc nhìn đạt chất lượng. Import thư mục ảnh được giữ cho dữ liệu cũ/tham chiếu, không được xem là đăng ký Face ID hoàn chỉnh.
 
 Mo Swagger UI tai:
 
@@ -68,7 +94,7 @@ Luot test nhanh:
 
 1. Dang nhap tai `/demo/login` bang `admin / admin123`.
 2. Mo trang **Sinh vien** de them, sua va ghi nhan trang thai dong y.
-3. Mo trang **Khuon mat** de chup anh cho sinh vien da dong y, hoac nhap thu muc anh. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
+3. Mo trang **Khuon mat** de quet du 5 goc cho sinh vien da dong y. Co the nhap thu muc anh tham chieu; ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
 4. Mo trang **Buoi hoc**, chon lop, gio vao hoc va so phut cho phep tre, sau do mo buoi.
 5. Trang **Diem danh** cho phep bat camera, quet, xem bang diem danh, dieu chinh thu cong va xuat CSV.
 

@@ -16,7 +16,8 @@
               <span class="eyebrow">Dữ liệu sinh trắc học</span>
               <h1>Đăng ký khuôn mặt</h1>
               <p class="lede">
-                Chụp một ảnh rõ mặt hoặc nhập nhiều ảnh theo mã số sinh viên.
+                Thu đủ năm góc nhìn đạt chất lượng để hoàn tất Face ID. Ảnh nhập
+                từ thư mục chỉ dùng làm dữ liệu tham chiếu.
               </p>
             </div>
             <a class="btn secondary" href="/demo/students">Quản lý sinh viên</a>
@@ -26,9 +27,10 @@
             <section class="card card-pad">
               <div class="card-head">
                 <div>
-                  <h2>Chụp ảnh đăng ký</h2>
+                  <h2>Quét Face ID 5 góc</h2>
                   <p>
-                    Chọn sinh viên đã đồng ý và đặt khuôn mặt vào khung hình.
+                    Chọn sinh viên đã đồng ý, sau đó lần lượt nhìn thẳng, quay
+                    trái, quay phải, ngẩng lên và cúi xuống.
                   </p>
                 </div>
               </div>
@@ -41,25 +43,39 @@
               <div class="camera-box">
                 <video id="faceVideo" autoplay muted playsinline></video
                 ><span class="camera-hint"
-                  >Ảnh được xử lý trên máy chủ sau khi chụp</span
+                  >Giữ khuôn mặt trong khung hình và làm theo hướng dẫn</span
                 >
               </div>
               <canvas id="faceCanvas" width="640" height="480" hidden></canvas>
               <div class="actions" style="margin-top: 15px">
                 <button id="faceCamera" class="btn secondary">Bật camera</button
-                ><button id="captureFace" class="btn">Chụp và đăng ký</button>
+                ><button id="captureFace" class="btn">
+                  Bắt đầu quét 5 góc
+                </button>
+              </div>
+              <div
+                id="enrollProgress"
+                class="enroll-progress"
+                hidden
+                aria-live="polite"
+              >
+                <div class="pose-list" id="poseList"></div>
+                <div class="progress-track"><span id="progressBar"></span></div>
+                <strong id="poseTitle">Nhìn thẳng</strong>
+                <p id="poseMessage">Giữ yên khuôn mặt để bắt đầu.</p>
               </div>
               <p class="hint">
-                Mỗi ảnh chỉ nên có một khuôn mặt, đủ sáng và nhìn thẳng.
+                Mỗi khung hình chỉ có một khuôn mặt, đủ sáng. Quy trình hoàn tất
+                khi cả 5 góc được ghi nhận.
               </p>
             </section>
             <section class="card card-pad">
               <div class="card-head">
                 <div>
-                  <h2>Nhập ảnh hàng loạt</h2>
+                  <h2>Nhập ảnh tham chiếu</h2>
                   <p>
-                    Tên file bắt đầu bằng MSSV, ví dụ SV001.jpg hoặc
-                    SV001_1.jpg.
+                    Ảnh nhập không thay thế quy trình quét Face ID 5 góc. Tên
+                    file bắt đầu bằng MSSV, ví dụ SV001.jpg.
                   </p>
                 </div>
               </div>
@@ -123,7 +139,7 @@
                     <th>Sinh viên</th>
                     <th>Lớp</th>
                     <th>Đồng ý</th>
-                    <th>Số mẫu</th>
+                    <th>Face ID</th>
                     <th>Ảnh gần nhất</th>
                   </tr>
                 </thead>

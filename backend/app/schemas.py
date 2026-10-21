@@ -56,6 +56,8 @@ class StudentFaceSummary(BaseModel):
     class_label: str | None
     consent_status: str
     face_template_count: int
+    captured_pose_count: int = 0
+    enrollment_complete: bool = False
     latest_image_path: str | None
     latest_image_url: str | None
 
@@ -253,4 +255,50 @@ class FaceTemplateRead(BaseModel):
     embedding_dim: int
     image_path: str | None
     quality_score: float | None
+    pose_label: str | None = None
     is_active: bool
+
+
+class FaceEnrollmentScanRequest(BaseModel):
+    image_base64: str
+    target_pose: str
+
+
+class FaceEnrollmentProgress(BaseModel):
+    accepted: bool
+    message: str
+    detected_pose: str | None = None
+    target_pose: str
+    yaw: float | None = None
+    pitch: float | None = None
+    captured_poses: list[str]
+    missing_poses: list[str]
+    progress_percent: int
+    completed: bool
+    engine: str
+
+
+class DashboardSummaryRead(BaseModel):
+    total_students: int
+    enrolled_students: int
+    active_classes: int
+    open_sessions: int
+    attendance_today: int
+    attendance_rate_today: float
+
+
+class SessionSummaryRead(BaseModel):
+    id: int
+    class_id: int
+    class_code: str
+    class_name: str
+    teacher_name: str | None
+    start_time: datetime
+    expected_start_time: datetime | None
+    end_time: datetime | None
+    status: str
+    total_students: int
+    present_count: int
+    late_count: int
+    absent_count: int
+    attendance_rate: float
