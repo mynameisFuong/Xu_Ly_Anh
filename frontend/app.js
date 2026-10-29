@@ -671,7 +671,19 @@
     scanBusy = false,
     activeSession = null,
     latestBoard = null,
-    lastScanResult = null;
+    lastScanResult = null,
+    scanChallenge = null,
+    scanEpoch = 0,
+    scanPolicy = null;
+  function renderLiveness(state, message) {
+    const panel = $("livenessPanel");
+    if (!panel) return;
+    panel.dataset.state = state?.status || "pending";
+    $("livenessTitle").textContent = state?.status === "passed" ? "Đã xác minh người thật" : "Xác minh người thật";
+    $("livenessHint").textContent = message || state?.message || "Làm theo hướng dẫn và giữ một khuôn mặt trong khung hình.";
+    $("livenessProgress").max = state?.total_steps || 7;
+    $("livenessProgress").value = state?.status === "passed" ? 7 : (state?.step || 0);
+  }
   function renderScanFace(result) {
     const box = $("scanFaceBox");
     const video = $("scanVideo");
@@ -713,6 +725,7 @@
     box.style.height = `${height * scale}px`;
     const recognized =
       result.decision === "recognized" &&
+      result.attendance &&
       result.full_name &&
       result.student_code;
     box.classList.toggle("recognized", Boolean(recognized));
@@ -728,6 +741,8 @@
   function stopScan() {
     if (scanTimer) clearInterval(scanTimer);
     scanTimer = null;
+    scanChallenge = null;
+    scanEpoch += 1;
     lastScanResult = null;
     if ($("scanFaceBox")) $("scanFaceBox").hidden = true;
     if ($("scanToggle")) $("scanToggle").textContent = "Bắt đầu quét";
@@ -735,6 +750,14 @@
       $("scanBadge").textContent = "Đã dừng";
       $("scanBadge").className = "badge pending";
     }
+  }
+  function finishScan(result) {
+    stopScan();
+    $("scanToggle").textContent = "Quét người tiếp theo";
+    $("scanBadge").textContent = "Đã điểm danh";
+    $("scanBadge").className = "badge present";
+    renderLiveness({status: "passed"}, `${result.student_code} · ${result.full_name}: ${result.message}. Bấm “Quét người tiếp theo” khi sẵn sàng.`);
+    $("livenessTitle").textContent = "Đã ghi nhận điểm danh";
   }
   function renderBoard(board) {
     latestBoard = board;
@@ -783,28 +806,43 @@
     history.replaceState(null, "", `/demo/attendance?session=${id}`);
   }
   async function scanOnce() {
-    if (scanBusy || !activeSession || !scanStream) return;
+    if (scanBusy || !activeSession || !scanStream || !scanTimer) return;
     scanBusy = true;
     const sessionId = activeSession.session_id;
+    const epoch = scanEpoch;
     try {
+      if (!scanChallenge) {
+        const challenge = await json("POST", `/sessions/${sessionId}/liveness-challenge`, {});
+        if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
+        scanChallenge = challenge;
+        renderLiveness(challenge);
+      }
       const blob = await frameBlob($("scanVideo"), $("scanCanvas"));
+      if (!blob) throw new Error("Không chụp được khung hình camera.");
       const base64 = await new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
+      if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
       const result = await json("POST", `/sessions/${sessionId}/scan-frame`, {
         camera_id: "browser-camera",
         image_base64: base64,
         idempotency_key: crypto.randomUUID(),
+        challenge_id: scanChallenge.challenge_id,
+        step_token: scanChallenge.step_token,
+        sequence: scanChallenge.sequence,
       });
-      if (!scanTimer || activeSession?.session_id !== sessionId) return;
+      if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
+      if (result.liveness) {
+        renderLiveness(result.liveness, result.message);
+        scanChallenge = result.liveness.status === "pending" ? result.liveness : null;
+      }
       lastScanResult = result;
       renderScanFace(result);
-      if (result.already_recorded) return;
       const message =
-        result.decision === "recognized"
+        result.decision === "recognized" && result.attendance
           ? `${result.student_code} · ${result.full_name}: ${result.message}`
           : result.message;
       const log = $("scanLog");
@@ -814,7 +852,14 @@
         `<li>${esc(message)}<time>${new Date().toLocaleTimeString("vi-VN")}</time></li>`,
       );
       while (log.children.length > 8) log.lastElementChild.remove();
-      if (result.decision === "recognized") await refreshBoard();
+      if (result.decision === "recognized" && result.attendance) {
+        finishScan(result);
+        try {
+          await refreshBoard();
+        } catch (_) {
+          notify("Điểm danh đã lưu; chưa tải lại được danh sách. Bạn có thể bấm làm mới.", "warn");
+        }
+      }
     } catch (error) {
       stopScan();
       notify(error.message, "error");
@@ -823,6 +868,18 @@
     }
   }
   async function initAttendance() {
+    try {
+      scanPolicy = await api("/face-analysis/status");
+    } catch (_) {
+      scanPolicy = { web_liveness_required: true, web_liveness_ready: false };
+    }
+    if (scanPolicy.web_liveness_required && !scanPolicy.web_liveness_ready) {
+      renderLiveness({status: "unavailable"}, scanPolicy.web_liveness_message || "Chống giả mạo chưa sẵn sàng. Liên hệ quản trị viên để kiểm tra engine Face ID và model PAD.");
+    } else if (scanPolicy.web_liveness_required) {
+      renderLiveness({status: "pending"}, "Giữ mặt trong khung, quay đầu chậm và nhẹ theo hướng dẫn rồi trở về nhìn thẳng. Không cần quay ngang hẳn.");
+    } else {
+      renderLiveness({status: "off"}, "Chế độ tương thích: thử thách chuyển động đang tắt.");
+    }
     window.addEventListener("resize", () => {
       if (lastScanResult) renderScanFace(lastScanResult);
     });
@@ -906,8 +963,11 @@
         }
         if (!activeSession)
           throw new Error("Chọn buổi điểm danh trước khi quét.");
+        if (scanPolicy?.web_liveness_required && !scanPolicy.web_liveness_ready)
+          throw new Error("Chức năng chống giả mạo chưa sẵn sàng. Vui lòng liên hệ quản trị viên.");
         if (!scanStream) scanStream = await openCamera("scanVideo");
-        scanTimer = setInterval(scanOnce, 1600);
+        renderLiveness({status: "pending"}, "Đang bắt đầu lượt quét mới. Nhìn thẳng và giữ mặt trong khung.");
+        scanTimer = setInterval(scanOnce, 700);
         scanOnce();
         $("scanToggle").textContent = "Dừng quét";
         $("scanBadge").textContent = "Đang quét";

@@ -1,13 +1,15 @@
 import csv
 import base64
 import uuid
+from hashlib import sha256
 from datetime import datetime, time, timezone
 from io import BytesIO, StringIO
+from functools import lru_cache
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -56,9 +58,9 @@ from backend.app.schemas import (
     StudentUpdate,
     UserCreate,
     UserRead,
+    WebLivenessState,
 )
 from backend.app.security import (
-    get_current_user,
     hash_password,
     require_admin,
     require_teacher_or_admin,
@@ -67,7 +69,6 @@ from backend.app.security import (
     verify_password,
 )
 from backend.app.services.attendance import (
-    calculate_late_minutes,
     close_session,
     create_recognition_event,
     open_session,
@@ -77,6 +78,48 @@ from backend.app.services.face_templates import build_default_recognizer, regist
 from backend.app.services.audit import write_audit
 
 router = APIRouter()
+
+
+@lru_cache(maxsize=4)
+def _camera_confirmations(min_hits: int, window_seconds: int):
+    from ai_pipeline.temporal import CameraConfirmationStore
+
+    return CameraConfirmationStore(min_hits, window_seconds)
+
+
+@lru_cache(maxsize=1)
+def _web_liveness_store():
+    from backend.app.services.web_liveness import WebLivenessStore
+
+    return WebLivenessStore(get_settings())
+
+
+def _web_liveness_ready(recognizer):
+    settings = get_settings()
+    analysis = getattr(recognizer, "_analysis", None)
+    detector = getattr(analysis, "liveness", None)
+    return bool(
+        settings.liveness_mode == "enforce" and recognizer.supports_pose
+        and recognizer.distance_metric == "euclidean" and detector and detector.ready
+        and (getattr(detector, "can_enforce", False) or detector.approved)
+    )
+
+
+def _web_liveness_message(recognizer):
+    settings = get_settings()
+    if not settings.web_liveness_required:
+        return "Thử thách chuyển động đang tắt theo cấu hình."
+    if settings.liveness_mode != "enforce":
+        return "Backend chưa bật LIVENESS_MODE=enforce. Nếu .env đã bật, hãy khởi động lại bằng scripts/run_web.py để bỏ biến môi trường cũ của terminal."
+    if not recognizer or not recognizer.supports_pose or recognizer.distance_metric != "euclidean":
+        return "Thiếu engine Face ID đa góc. Cài engine theo README trong đúng môi trường Python đang chạy backend."
+    analysis = getattr(recognizer, "_analysis", None)
+    detector = getattr(analysis, "liveness", None)
+    if not detector or not detector.ready:
+        return "Model PAD chưa nạp được. Kiểm tra ONNX Runtime, tải model bằng scripts/download_liveness_models.py rồi khởi động lại backend."
+    if not _web_liveness_ready(recognizer):
+        return "Model PAD chưa được duyệt. Với thử nghiệm MiniFASNet local, kiểm tra LIVENESS_ALLOW_PRETRAINED trong .env."
+    return "Chống giả mạo đã sẵn sàng. Làm theo hướng dẫn quay đầu khi quét."
 
 
 def _localized_face_error(reason: str | None) -> str:
@@ -90,6 +133,9 @@ def _localized_face_error(reason: str | None) -> str:
         "Image is too dark": "Khung hình quá tối, vui lòng tăng ánh sáng",
         "Image is overexposed": "Khung hình quá sáng, vui lòng điều chỉnh ánh sáng",
         "Image is blurry": "Ảnh bị mờ, vui lòng giữ yên khuôn mặt",
+        "Liveness spoof suspected": "Phát hiện dấu hiệu ảnh in hoặc màn hình phát lại. Vui lòng dùng khuôn mặt thật.",
+        "Liveness uncertain": "Chưa xác minh được người thật. Vui lòng điều chỉnh ánh sáng và thử lại.",
+        "Liveness unavailable": "Chức năng xác minh người thật chưa sẵn sàng. Vui lòng thử lại hoặc liên hệ giảng viên.",
     }
     for prefix, message in translations.items():
         if text.startswith(prefix):
@@ -282,19 +328,11 @@ def dashboard_summary(
     db: Session = Depends(get_db),
 ) -> DashboardSummaryRead:
     total_students = db.scalar(select(func.count(Student.id)).where(Student.deleted_at.is_(None))) or 0
-    completed_enrollments = (
-        select(FaceTemplate.student_id)
-        .join(Student, Student.id == FaceTemplate.student_id)
-        .where(
-            FaceTemplate.is_active.is_(True),
-            FaceTemplate.pose_label.is_not(None),
-            Student.deleted_at.is_(None),
+    enrolled_students = db.scalar(
+        select(func.count(Student.id)).where(
+            Student.deleted_at.is_(None), Student.id.in_(_completed_face_students()),
         )
-        .group_by(FaceTemplate.student_id)
-        .having(func.count(func.distinct(FaceTemplate.pose_label)) >= 5)
-        .subquery()
-    )
-    enrolled_students = db.scalar(select(func.count()).select_from(completed_enrollments)) or 0
+    ) or 0
     active_classes = db.scalar(select(func.count(Class.id))) or 0
     open_sessions = db.scalar(
         select(func.count(ClassSession.id)).where(ClassSession.status == SessionStatus.OPEN.value)
@@ -432,7 +470,11 @@ def list_students_with_faces(
             .order_by(FaceTemplate.created_at.desc())
         ).all()
         latest = templates[0] if templates else None
-        captured_poses = {item.pose_label for item in templates if item.pose_label is not None}
+        profiles: dict[str, set[str]] = {}
+        for item in templates:
+            if item.pose_label in {"front", "left", "right", "up", "down"}:
+                profiles.setdefault(item.model_version, set()).add(item.pose_label)
+        captured_poses = max(profiles.values(), key=len, default=set())
         summaries.append(
             StudentFaceSummary(
                 id=student.id,
@@ -643,6 +685,11 @@ def add_recognition_event(
     payload: RecognitionEventCreate,
     db: Session = Depends(get_db),
 ):
+    if get_settings().liveness_mode == "enforce" and payload.decision == "recognized":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Liveness enforcement requires camera-scan-frame; unverified recognition events cannot mark attendance.",
+        )
     event, _attendance = create_recognition_event(db, session_id=session_id, payload=payload)
     return event
 
@@ -702,23 +749,98 @@ def scan_frame(
     _user: User = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ) -> FrameScanResponse:
+    return _scan_frame(session_id, payload, db, web_owner=("user", _user.id, session_id))
+
+
+@router.post("/sessions/{session_id}/liveness-challenge", response_model=WebLivenessState)
+def start_liveness_challenge(
+    session_id: int,
+    user: User = Depends(require_user_or_admin),
+    db: Session = Depends(get_db),
+) -> dict:
+    class_session = db.get(ClassSession, session_id)
+    if class_session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if class_session.status != SessionStatus.OPEN.value:
+        raise HTTPException(status_code=409, detail="Session is not open")
+    if not get_settings().web_liveness_required:
+        return {"status": "off", "message": "Xác minh chuyển động đang tắt"}
+    if not _web_liveness_ready(build_default_recognizer()):
+        raise HTTPException(status_code=503, detail=_web_liveness_message(build_default_recognizer()))
+    return _web_liveness_store().start(("user", user.id, session_id))
+
+
+@router.post(
+    "/sessions/{session_id}/camera-scan-frame", response_model=FrameScanResponse,
+    dependencies=[Depends(verify_camera_token)],
+)
+def scan_camera_frame(
+    session_id: int,
+    payload: FrameScanRequest,
+    dry_run: bool = False,
+    stream_id: str = "",
+    db: Session = Depends(get_db),
+) -> FrameScanResponse:
+    if len(stream_id) > 80 or len(payload.camera_id) > 80:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Camera identifier is too long")
+    return _scan_frame(session_id, payload, db, dry_run=dry_run,
+                       confirmation_key=(session_id, payload.camera_id, stream_id))
+
+
+def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_run: bool = False,
+                confirmation_key=None, web_owner=None) -> FrameScanResponse:
+    settings = get_settings()
+    confirmations = _camera_confirmations(settings.attendance_min_hits, settings.attendance_window_seconds)
     class_session = db.get(ClassSession, session_id)
     if class_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if class_session.status != SessionStatus.OPEN.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not open")
+
+    web_guard = web_owner is not None and settings.web_liveness_required
+    challenge_store = _web_liveness_store() if web_guard else None
+    if web_guard and not challenge_store.valid(payload.challenge_id, web_owner):
+        return FrameScanResponse(
+            decision="unknown", message="Cần bắt đầu xác minh người thật trước khi điểm danh.",
+            liveness={"status": "required", "message": "Bắt đầu thử thách mới"},
+        )
 
     recognizer = build_default_recognizer()
+    if web_guard and not _web_liveness_ready(recognizer):
+        challenge_store.cancel(payload.challenge_id, web_owner)
+        return FrameScanResponse(decision="unknown", message="Chức năng chống giả mạo chưa sẵn sàng.",
+                                 liveness={"status": "unavailable"})
     image_base64 = payload.image_base64
     if "," in image_base64:
         image_base64 = image_base64.split(",", 1)[1]
     try:
         image_bytes = base64.b64decode(image_base64, validate=True)
     except ValueError as exc:
+        if challenge_store:
+            challenge_store.cancel(payload.challenge_id, web_owner)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image data") from exc
 
     result = recognizer.extract_single_embedding(image_bytes)
     if not result.accepted:
+        confirmations.reset(confirmation_key)
+        reason = result.reason or ""
+        retryable = reason in {"No face detected", "Cannot encode face", "Liveness uncertain"} or reason.startswith((
+            "Face is too small:", "Image is too dark:", "Image is overexposed:", "Image is blurry:",
+        ))
+        if challenge_store and retryable:
+            hint = ("Tạm mất khuôn mặt; quay đầu chậm, giảm góc quay và giữ mặt trong khung"
+                    if reason == "No face detected" else _localized_face_error(reason))
+            state = challenge_store.retry_frame(
+                payload.challenge_id, web_owner, step_token=payload.step_token, sequence=payload.sequence,
+                digest=sha256(image_bytes).hexdigest(), message=hint,
+            )
+            return FrameScanResponse(decision="unknown", message=state["message"],
+                                     face_box=result.face_box, liveness=state)
+        if challenge_store:
+            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
-            decision="unknown", message=_localized_face_error(result.reason), face_box=result.face_box
+            decision="unknown", message=_localized_face_error(result.reason), face_box=result.face_box,
+            liveness={"status": "failed", "message": _localized_face_error(result.reason)} if web_guard else None,
         )
 
     try:
@@ -735,19 +857,27 @@ def scan_frame(
         .join(ClassEnrollment, ClassEnrollment.student_id == FaceTemplate.student_id)
         .where(
             ClassEnrollment.class_id == class_session.class_id,
+            FaceTemplate.student_id.in_(select(Student.id).where(Student.consent_status == ConsentStatus.GRANTED.value)),
             FaceTemplate.is_active.is_(True),
             FaceTemplate.model_version == recognizer.model_version,
-            FaceTemplate.student_id.in_(_completed_face_students()),
+            FaceTemplate.student_id.in_(_completed_face_students(recognizer.model_version)),
         )
     ).scalars()
     templates: dict[int, list[np.ndarray]] = {}
     for template in template_rows:
-        templates.setdefault(template.student_id, []).append(np.frombuffer(template.embedding, dtype=np.float32))
+        if len(template.embedding) != template.embedding_dim * 4 or template.embedding_dim != result.embedding.size:
+            continue
+        vector = np.frombuffer(template.embedding, dtype=np.float32)
+        if np.isfinite(vector).all():
+            templates.setdefault(template.student_id, []).append(vector)
 
     if not templates:
+        confirmations.reset(confirmation_key)
+        if challenge_store:
+            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
-            decision="unknown", message="Lớp học chưa có mẫu khuôn mặt để nhận diện",
-            face_box=result.face_box
+            decision="unknown", message="Lớp học chưa có đủ 5 góc Face ID cùng phiên bản đang chạy. Vui lòng đăng ký lại nếu vừa đổi cấu hình xử lý ảnh.",
+            face_box=result.face_box, liveness={"status": "failed"} if web_guard else None,
         )
 
     settings = get_settings()
@@ -767,12 +897,39 @@ def scan_frame(
         metric=recognizer.distance_metric,
     )
     if match.student_id is None:
+        confirmations.reset(confirmation_key)
+        if challenge_store:
+            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
             decision=match.decision,
             message="Độ tin cậy chưa đủ, vui lòng nhìn thẳng vào camera",
             candidate_score=match.score,
             second_score=match.second_score,
             face_box=result.face_box,
+            liveness={"status": "failed"} if web_guard else None,
+        )
+
+    liveness_state = None
+    if challenge_store:
+        # Kiểm tra phòng thủ: recognizer phải chứng minh PAD đã chạy trên frame này.
+        pad = getattr(getattr(result, "diagnostics", None), "liveness", None)
+        if pad is None or pad.status != "live":
+            challenge_store.cancel(payload.challenge_id, web_owner)
+            return FrameScanResponse(decision="unknown", message="Frame chưa được xác minh chống giả mạo.",
+                                     liveness={"status": "failed"}, face_box=result.face_box)
+        liveness_state = challenge_store.observe(
+            payload.challenge_id, web_owner, step_token=payload.step_token, sequence=payload.sequence,
+            digest=sha256(image_bytes).hexdigest(), result=result, student_id=match.student_id,
+        )
+        if liveness_state["status"] != "passed":
+            return FrameScanResponse(decision="unknown", message=liveness_state["message"],
+                                     face_box=result.face_box, liveness=liveness_state)
+
+    if confirmation_key is not None and not confirmations.observe(confirmation_key, match.student_id):
+        return FrameScanResponse(
+            decision="low_confidence", message="Đang xác nhận khuôn mặt qua nhiều khung hình",
+            face_box=result.face_box,
+            liveness=liveness_state,
         )
 
     student = db.get(Student, match.student_id)
@@ -796,6 +953,18 @@ def scan_frame(
             second_score=match.second_score,
             attendance=existing_attendance,
             face_box=result.face_box,
+            liveness=liveness_state,
+        )
+
+    if dry_run:
+        return FrameScanResponse(
+            decision=match.decision, message="Chạy thử: không ghi điểm danh",
+            student_id=match.student_id,
+            student_code=student.student_code if student else None,
+            full_name=student.full_name if student else None,
+            class_label=student.class_label if student else None,
+            class_name=class_session.class_.name if class_session.class_ else None,
+            candidate_score=match.score, second_score=match.second_score, face_box=result.face_box,
         )
 
     event_payload = RecognitionEventCreate(
@@ -808,6 +977,9 @@ def scan_frame(
         idempotency_key=payload.idempotency_key or str(uuid.uuid4()),
     )
     _event, attendance = create_recognition_event(db, session_id=session_id, payload=event_payload)
+    if attendance is None:
+        return FrameScanResponse(decision="unknown", message="Chưa lưu được điểm danh. Vui lòng kiểm tra danh sách lớp hoặc liên hệ giảng viên.",
+                                 face_box=result.face_box, liveness=liveness_state)
     _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
     message = "Đúng giờ"
     if attendance is not None and attendance.status == "late":
@@ -825,6 +997,7 @@ def scan_frame(
         second_score=match.second_score,
         attendance=attendance,
         face_box=result.face_box,
+        liveness=liveness_state,
     )
 
 
@@ -856,7 +1029,7 @@ def register_face_template(
     return register_face_image(db, student_id=student_id, file=file, recognizer=recognizer)
 
 
-def _enrollment_progress(db: Session, student_id: int) -> tuple[list[str], list[str]]:
+def _enrollment_progress(db: Session, student_id: int, model_version: str | None = None) -> tuple[list[str], list[str]]:
     from ai_pipeline.recognition import ENROLLMENT_POSES
 
     captured = set(
@@ -865,6 +1038,7 @@ def _enrollment_progress(db: Session, student_id: int) -> tuple[list[str], list[
                 FaceTemplate.student_id == student_id,
                 FaceTemplate.is_active.is_(True),
                 FaceTemplate.pose_label.is_not(None),
+                *([FaceTemplate.model_version == model_version] if model_version is not None else []),
             )
         ).all()
     )
@@ -872,13 +1046,55 @@ def _enrollment_progress(db: Session, student_id: int) -> tuple[list[str], list[
     return ordered, [pose for pose in ENROLLMENT_POSES if pose not in captured]
 
 
-def _completed_face_students():
+def _completed_face_profiles():
     return (
-        select(FaceTemplate.student_id)
-        .where(FaceTemplate.is_active.is_(True), FaceTemplate.pose_label.is_not(None))
-        .group_by(FaceTemplate.student_id)
+        select(FaceTemplate.student_id, FaceTemplate.model_version)
+        .where(FaceTemplate.is_active.is_(True), FaceTemplate.pose_label.in_(("front", "left", "right", "up", "down")))
+        .group_by(FaceTemplate.student_id, FaceTemplate.model_version)
         .having(func.count(func.distinct(FaceTemplate.pose_label)) >= 5)
     )
+
+
+def _completed_face_students(model_version: str | None = None):
+    profiles = _completed_face_profiles().subquery()
+    query = select(profiles.c.student_id).distinct()
+    return query.where(profiles.c.model_version == model_version) if model_version is not None else query
+
+
+def _pipeline_status(*, load_engine: bool = True) -> dict:
+    settings = get_settings()
+    recognizer = build_default_recognizer() if load_engine else None
+    analysis = getattr(recognizer, "_analysis", None)
+    detector = analysis.liveness if analysis is not None else None
+    face_detector = getattr(recognizer, "_face_detector", None)
+    return {
+        "engine": recognizer.model_name if recognizer else None,
+        "model_version": recognizer.model_version if recognizer else None,
+        "face_detection": face_detector.status() if face_detector else {"backend": "hog", "yunet_ready": False},
+        "preprocessing_mode": settings.preprocessing_mode,
+        "liveness_mode": settings.liveness_mode,
+        "liveness_backend": settings.liveness_backend,
+        "liveness_ready": bool(detector and detector.ready),
+        "liveness_approved": bool(detector and detector.approved),
+        "liveness_model_version": detector.model_version if detector else None,
+        "liveness_allow_pretrained": settings.liveness_allow_pretrained,
+        "web_liveness_required": settings.web_liveness_required,
+        "web_liveness_ready": _web_liveness_ready(recognizer) if recognizer else False,
+        "web_liveness_message": _web_liveness_message(recognizer),
+        "metrics": analysis.metrics() if analysis else None,
+    }
+
+
+@router.get("/face-analysis/status")
+def face_analysis_status(_user: User = Depends(require_user_or_admin)) -> dict:
+    return _pipeline_status()
+
+
+@router.get("/camera/pipeline", dependencies=[Depends(verify_camera_token)])
+def camera_pipeline_status() -> dict:
+    settings = get_settings()
+    # Legacy local workers can use a backend without any camera dependencies.
+    return _pipeline_status(load_engine=settings.preprocessing_mode != "off" or settings.liveness_mode != "off")
 
 
 @router.get("/face-enrollment/engine")
@@ -949,7 +1165,7 @@ def scan_face_enrollment(
         classify_enrollment_pose(result.pose, payload.target_pose, payload.neutral_pitch)
         if result.pose else None
     )
-    captured, missing = _enrollment_progress(db, student_id)
+    captured, missing = _enrollment_progress(db, student_id, recognizer.model_version)
     base_response = {
         "detected_pose": detected,
         "target_pose": payload.target_pose,
@@ -963,6 +1179,11 @@ def scan_face_enrollment(
     }
     if not result.accepted:
         return FaceEnrollmentProgress(accepted=False, message=_localized_face_error(result.reason), **base_response)
+    if detected is None:
+        return FaceEnrollmentProgress(
+            accepted=False, message="Chưa xác định được hướng khuôn mặt. Vui lòng nhìn rõ vào camera và thử lại.",
+            **base_response,
+        )
     if detected != payload.target_pose:
         names = {"front": "chính diện", "left": "trái", "right": "phải", "up": "lên trên", "down": "xuống dưới"}
         return FaceEnrollmentProgress(
@@ -975,6 +1196,7 @@ def scan_face_enrollment(
         select(FaceTemplate).where(
             FaceTemplate.student_id == student_id,
             FaceTemplate.pose_label == payload.target_pose,
+            FaceTemplate.model_version == recognizer.model_version,
             FaceTemplate.is_active.is_(True),
         )
     )
@@ -988,7 +1210,7 @@ def scan_face_enrollment(
             pose_label=payload.target_pose,
             extracted_result=result,
         )
-    captured, missing = _enrollment_progress(db, student_id)
+    captured, missing = _enrollment_progress(db, student_id, recognizer.model_version)
     return FaceEnrollmentProgress(
         accepted=True,
         message="Đã ghi nhận góc khuôn mặt",
@@ -1098,8 +1320,9 @@ def list_class_face_templates(class_id: int, db: Session = Depends(get_db)) -> l
         .join(ClassEnrollment, ClassEnrollment.student_id == FaceTemplate.student_id)
         .where(
             ClassEnrollment.class_id == class_id,
+            FaceTemplate.student_id.in_(select(Student.id).where(Student.consent_status == ConsentStatus.GRANTED.value)),
             FaceTemplate.is_active.is_(True),
-            FaceTemplate.student_id.in_(_completed_face_students()),
+            tuple_(FaceTemplate.student_id, FaceTemplate.model_version).in_(_completed_face_profiles()),
         )
     ).scalars()
     return [

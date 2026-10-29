@@ -68,6 +68,11 @@
                 <span class="camera-hint">Giữ khuôn mặt ở giữa khung hình</span>
               </div>
               <canvas id="scanCanvas" width="640" height="480" hidden></canvas>
+              <div id="livenessPanel" class="liveness-panel" role="status" aria-live="polite">
+                <strong id="livenessTitle">Xác minh người thật</strong>
+                <p id="livenessHint">Đang kiểm tra chức năng chống giả mạo…</p>
+                <progress id="livenessProgress" max="7" value="0" aria-label="Tiến độ xác minh"></progress>
+              </div>
               <div class="actions" style="margin-top: 15px">
                 <button id="scanCamera" class="btn secondary">Bật camera</button
                 ><button id="scanToggle" class="btn">Bắt đầu quét</button>

@@ -17,7 +17,6 @@ from tkinter import (
     Listbox,
     StringVar,
     Tk,
-    Toplevel,
     filedialog,
     messagebox,
     ttk,
@@ -447,6 +446,7 @@ class App:
             self.camera_running = False
             return
         last_scan = 0.0
+        challenge = None
         while self.camera_running:
             ok, frame = self.capture.read()
             if not ok:
@@ -464,7 +464,13 @@ class App:
                         "idempotency_key": f"desktop-{uuid.uuid4()}",
                     }
                     try:
+                        if challenge is None:
+                            challenge = self.api.post_json(f"/sessions/{session_id}/liveness-challenge", {})
+                        payload.update({key: challenge.get(key) for key in ("challenge_id", "step_token", "sequence")})
                         result = self.api.post_json(f"/sessions/{session_id}/scan-frame", payload)
+                        state = result.get("liveness")
+                        if state:
+                            challenge = state if state["status"] == "pending" else None
                         if result["decision"] == "recognized":
                             status.set(
                                 f"{result['full_name']} ({result['student_code']}) - {result['class_name']} - {result['message']}"
@@ -473,6 +479,7 @@ class App:
                         else:
                             status.set(result["message"])
                     except Exception as exc:
+                        challenge = None
                         status.set(str(exc))
             if cv2.waitKey(1) & 0xFF == ord("q"):
                 break

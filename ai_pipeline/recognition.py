@@ -1,10 +1,16 @@
 from dataclasses import dataclass
 from pathlib import Path
+from contextlib import nullcontext
+from threading import RLock
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 
 from ai_pipeline.quality import assess_face_quality
+
+if TYPE_CHECKING:
+    from ai_pipeline.analysis import AnalysisDiagnostics
 
 ENROLLMENT_POSES = ("front", "left", "right", "up", "down")
 
@@ -24,6 +30,7 @@ class EmbeddingResult:
     reason: str | None = None
     pose: PoseResult | None = None
     face_box: tuple[int, int, int, int] | None = None
+    diagnostics: "AnalysisDiagnostics | None" = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +67,7 @@ def _center(points: list[tuple[int, int]]) -> tuple[float, float]:
     return float(values[:, 0].mean()), float(values[:, 1].mean())
 
 
-def estimate_head_pose(landmarks: dict[str, list[tuple[int, int]]], image_shape) -> PoseResult:
+def estimate_head_pose(landmarks: dict[str, list[tuple[int, int]]], image_shape) -> PoseResult | None:
     """Estimate yaw/pitch from dlib's 68 landmarks with OpenCV solvePnP."""
     nose = landmarks["nose_tip"][2]
     chin = landmarks["chin"][8]
@@ -71,6 +78,8 @@ def estimate_head_pose(landmarks: dict[str, list[tuple[int, int]]], image_shape)
     image_points = np.asarray(
         [nose, chin, left_eye, right_eye, left_mouth, right_mouth], dtype=np.float64
     )
+    if not np.isfinite(image_points).all():
+        return None
     model_points = np.asarray(
         [
             (0.0, 0.0, 0.0),
@@ -91,10 +100,12 @@ def estimate_head_pose(landmarks: dict[str, list[tuple[int, int]]], image_shape)
         model_points, image_points, camera, np.zeros((4, 1)), flags=cv2.SOLVEPNP_ITERATIVE
     )
     if not ok:
-        return PoseResult("front", 0.0, 0.0)
+        return None
     rotation_matrix, _ = cv2.Rodrigues(rotation)
     angles, *_ = cv2.RQDecomp3x3(rotation_matrix)
     pitch, yaw, _roll = (float(value) for value in angles)
+    if not np.isfinite([pitch, yaw, _roll]).all():
+        return None
     # solvePnP may express the same orientation with a ~180° X rotation.
     # Fold it back to the human head-pose range used by the enrollment UI.
     if pitch < -90:
@@ -112,18 +123,36 @@ class FaceRecognizer:
     legacy demos running and cannot be used for guided Face ID enrollment.
     """
 
-    def __init__(self, cascade_path: str | None = None) -> None:
+    def __init__(self, cascade_path: str | None = None, *, preprocessing=None,
+                 liveness=None, liveness_mode: str = "off", detection=None) -> None:
+        self._lock = RLock()
+        self._face_detector = None
+        self._analysis = None
+        if preprocessing is not None or liveness_mode != "off":
+            from ai_pipeline.analysis import FaceAnalysis
+            from ai_pipeline.preprocessing import PreprocessingOptions
+
+            options = preprocessing or PreprocessingOptions()
+            if options.mode != "off" or liveness_mode != "off":
+                self._analysis = FaceAnalysis(self, preprocessing=options, liveness=liveness,
+                                              liveness_mode=liveness_mode)
         try:
             import face_recognition as face_recognition_lib
         except (ImportError, RuntimeError):
             face_recognition_lib = None
         self._face_recognition = face_recognition_lib
         if face_recognition_lib is not None:
+            if detection is not None and detection.backend in {"hybrid", "yunet"}:
+                from ai_pipeline.detection import HybridFaceDetector
+
+                self._face_detector = HybridFaceDetector(detection)
             self.model_name = "ageitgey-face-recognition-dlib-resnet"
             self.model_version = "dlib-resnet-v1-128d"
             self.distance_metric = "euclidean"
             self.supports_pose = True
             self.detector = None
+            if preprocessing is not None and preprocessing.mode == "enforce":
+                self.model_version += ":" + preprocessing.profile
             return
 
         if cascade_path is None:
@@ -135,15 +164,23 @@ class FaceRecognizer:
         self.model_version = "0.1.0"
         self.distance_metric = "cosine"
         self.supports_pose = False
+        if preprocessing is not None and preprocessing.mode == "enforce":
+            self.model_version += ":" + preprocessing.profile
 
     def extract_single_embedding(self, image_bytes: bytes, *, num_jitters: int = 1) -> EmbeddingResult:
         image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-        frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        try:
+            frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR) if image_array.size else None
+        except cv2.error:
+            frame = None
         if frame is None:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Cannot decode image")
-        if self._face_recognition is not None:
-            return self._extract_dlib(frame, num_jitters=num_jitters)
-        return self._extract_fallback(frame)
+        with getattr(self, "_lock", nullcontext()):
+            if getattr(self, "_analysis", None) is not None:
+                return self._analysis.analyze(frame, num_jitters=num_jitters)
+            if self._face_recognition is not None:
+                return self._extract_dlib(frame, num_jitters=num_jitters)
+            return self._extract_fallback(frame)
 
     def _extract_dlib(self, frame: np.ndarray, *, num_jitters: int) -> EmbeddingResult:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -187,19 +224,44 @@ class FaceRecognizer:
         return EmbeddingResult(True, self._fallback_embedding(face), quality.score, face_box=face_box)
 
     def detect_faces(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+        with getattr(self, "_lock", nullcontext()):
+            return self._detect_faces(frame_bgr)
+
+    def _detect_faces(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
         if self._face_recognition is not None:
+            detector = getattr(self, "_face_detector", None)
+            if detector is not None and detector.options.backend == "yunet":
+                boxes = detector.detect(frame_bgr, [])
+                # Tất cả các mặt DNN thấy đều được giữ; không chọn mặt lớn nhất.
+                if boxes:
+                    return boxes
+                # HOG chỉ cứu khi DNN không thấy mặt/không sẵn sàng, tránh chạy cả hai mỗi frame.
+                rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                locations = self._face_recognition.face_locations(rgb, model="hog")
+                return [(left, top, right - left, bottom - top) for top, right, bottom, left in locations]
             rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
             locations = self._face_recognition.face_locations(rgb, model="hog")
-            return [(left, top, right - left, bottom - top) for top, right, bottom, left in locations]
+            boxes = [(left, top, right - left, bottom - top) for top, right, bottom, left in locations]
+            return detector.detect(frame_bgr, boxes) if detector is not None else boxes
         gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
         faces = self.detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
         return [(int(x), int(y), int(w), int(h)) for x, y, w, h in faces]
+
+    def detect_rescue_faces(self, frame_bgr: np.ndarray) -> list[tuple[int, int, int, int]]:
+        """Tránh chạy lại HOG tốn CPU trên từng canvas xoay nếu YuNet sẵn sàng."""
+        with getattr(self, "_lock", nullcontext()):
+            detector = getattr(self, "_face_detector", None)
+            if detector is not None and detector.status()["yunet_ready"]:
+                return detector.detect(frame_bgr, [])
+            return self._detect_faces(frame_bgr)
 
     def extract_embeddings_from_frame(self, frame_bgr: np.ndarray):
         ok, encoded = cv2.imencode(".jpg", frame_bgr)
         if not ok:
             return []
         result = self.extract_single_embedding(encoded.tobytes())
+        if getattr(self, "_analysis", None) is not None:
+            return [(result.face_box, result.embedding)] if result.accepted and result.face_box is not None else []
         faces = self.detect_faces(frame_bgr)
         return [(faces[0], result.embedding)] if result.accepted and len(faces) == 1 else []
 
@@ -225,6 +287,14 @@ def match_embedding(
     margin: float,
     metric: str = "cosine",
 ) -> MatchResult:
+    embedding = np.asarray(embedding)
+    if embedding.ndim != 1 or embedding.size == 0 or not np.isfinite(embedding).all():
+        return MatchResult(None, 0.0, 0.0, "unknown")
+    templates = {
+        student_id: valid
+        for student_id, items in templates.items()
+        if (valid := [item for item in items if np.shape(item) == embedding.shape and np.isfinite(item).all()])
+    }
     if not templates:
         return MatchResult(None, 0.0, 0.0, "unknown")
     if metric == "euclidean":

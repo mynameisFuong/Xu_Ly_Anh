@@ -1092,3 +1092,9 @@ tbody tr:hover {
   color: var(--muted);
   margin: 4px 0 0;
 }
+/* Phản hồi liveness luôn tách khỏi trạng thái đã lưu điểm danh. */
+.liveness-panel { margin-top: 14px; padding: 14px 16px; border: 1px solid #bdd6ef; border-radius: 12px; background: #f0f7ff; }
+.liveness-panel p { margin: 6px 0 10px; line-height: 1.5; }
+.liveness-panel progress { width: 100%; height: 8px; accent-color: #2563eb; }
+.liveness-panel[data-state="failed"], .liveness-panel[data-state="unavailable"] { background: #fff4ee; border-color: #f1c1a7; }
+.liveness-panel[data-state="passed"] { background: #effaf3; border-color: #b0ddbd; }

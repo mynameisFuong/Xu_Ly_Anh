@@ -214,9 +214,24 @@ class AttendanceStatsRead(BaseModel):
 
 
 class FrameScanRequest(BaseModel):
-    camera_id: str = "browser-camera"
-    image_base64: str
-    idempotency_key: str | None = None
+    camera_id: str = Field(default="browser-camera", max_length=80)
+    image_base64: str = Field(max_length=2_800_000)
+    idempotency_key: str | None = Field(default=None, max_length=120)
+    challenge_id: str | None = Field(default=None, max_length=100)
+    step_token: str | None = Field(default=None, max_length=100)
+    sequence: int | None = Field(default=None, ge=0, le=500)
+
+
+class WebLivenessState(BaseModel):
+    status: str
+    message: str | None = None
+    challenge_id: str | None = None
+    step_token: str | None = None
+    action: str | None = None
+    step: int | None = None
+    total_steps: int | None = None
+    sequence: int | None = None
+    expires_in_seconds: float | None = None
 
 
 class FrameScanResponse(BaseModel):
@@ -232,6 +247,7 @@ class FrameScanResponse(BaseModel):
     second_score: float | None = None
     attendance: AttendanceRead | None = None
     face_box: tuple[int, int, int, int] | None = None
+    liveness: WebLivenessState | None = None
 
 
 class FaceImportItem(BaseModel):
@@ -262,7 +278,7 @@ class FaceTemplateRead(BaseModel):
 
 
 class FaceEnrollmentScanRequest(BaseModel):
-    image_base64: str
+    image_base64: str = Field(max_length=2_800_000)
     target_pose: str
     neutral_pitch: float | None = None
 

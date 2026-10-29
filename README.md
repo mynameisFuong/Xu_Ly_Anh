@@ -89,6 +89,46 @@ Neu ban dang dung Python cua MSYS va pip phai build `pydantic-core` hoac OpenCV 
 
 ## Test Demo Camera
 
+### Liveness web và camera nghiêng
+
+Web hiện yêu cầu **PAD + thử thách ngẫu nhiên từ server** trước khi ghi điểm danh.
+Cài và bật theo [FACE_ANALYSIS.md](docs/FACE_ANALYSIS.md#bật-liveness-web-trên-windows-python-313-x64):
+
+```powershell
+python -m pip install -r requirements-liveness.txt
+python scripts/download_liveness_models.py
+```
+
+Trong `.env`, chọn `LIVENESS_BACKEND=minifasnet`, `LIVENESS_MODE=enforce`,
+`LIVENESS_MODEL_DIR=./storage/pad-models/minifasnet-v1`, `WEB_LIVENESS_REQUIRED=true`.
+Chỉ cho thử local với trọng số pretrained chưa đánh giá: `LIVENESS_ALLOW_PRETRAINED=true`.
+Khởi động lại backend sau khi đổi cấu hình. Trên máy đã tạo `.venv313`, dùng:
+
+```powershell
+.\.venv313\Scripts\python.exe -m uvicorn backend.app.main:app --reload
+```
+
+Nếu terminal IDE giữ biến môi trường cũ (ví dụ file `.env` là enforce nhưng API
+status lại báo off), dùng launcher local đọc lại `.env` hiện tại:
+
+```powershell
+.\.venv313\Scripts\python.exe scripts/run_web.py --reload
+```
+
+Launcher local ưu tiên `.env` và đặt đúng thư mục dự án. Dừng backend cũ bằng
+Ctrl+C trước khi chạy; chỉ mở một backend trên cổng 8000. Quy tắc ưu tiên biến môi
+trường khi triển khai trực tiếp bằng Uvicorn vẫn được giữ nguyên.
+
+`PREPROCESSING_MODE=enforce` bật tìm hướng camera/roll, căn mắt và CLAHE. Cần quét
+lại đủ 5 góc cho profile mới; mẫu legacy được giữ và không tự trộn. Camera nghiêng
+vừa được hỗ trợ, mặt quay quá xa/che khuất vẫn cần người dùng điều chỉnh.
+
+Vào **Điểm danh**, bật camera, bắt đầu quét và quay đầu theo chỉ dẫn rồi trở về
+nhìn thẳng. Không dùng ảnh in/video để đăng ký hoặc xác minh. Nếu thiếu model/engine,
+UI báo chưa sẵn sàng và không tự ghi điểm danh; quy trình thủ công vẫn dùng được.
+Đây là chống giả mạo RGB nhiều lớp; chưa có báo cáo thực địa chứng minh độ chính xác
+và không bảo đảm chống mọi video/deepfake/chèn camera ảo. Xem API trong [docs/API.md](docs/API.md).
+
 ```powershell
 pip install -r requirements-camera.txt
 uvicorn backend.app.main:app --reload
@@ -162,6 +202,45 @@ X-Camera-Token: change-me-camera-token
 ```powershell
 pytest
 ```
+
+Tiền xử lý ảnh và PAD có chế độ `off/shadow/enforce`. Có baseline HOG/SVM + DFT tự
+huấn luyện và ensemble MiniFASNet ONNX tải riêng; web mặc định yêu cầu PAD sẵn sàng
+cùng thử thách server. Xem [hướng dẫn tích hợp và đánh giá](docs/FACE_ANALYSIS.md).
+Chưa kèm model PAD đã được đánh giá thực địa.
+Để chạy cả kiểm thử HTTP mới, cài `pip install -r requirements-dev.txt` rồi chạy `pytest`.
+
+Nếu quay đầu hay báo không thấy mặt, có thể bật detector hỗ trợ YuNet (CPU,
+không thay model nhận dạng dlib):
+
+```powershell
+python scripts/download_face_detector.py
+```
+
+Đặt `FACE_DETECTION_BACKEND=hybrid` và `PREPROCESSING_MODE=enforce` trong `.env`,
+rồi khởi động lại bằng `python scripts/run_web.py --reload`. Status
+`/face-analysis/status` phải có `face_detection.yunet_ready=true`. Thiếu model
+thì quay về HOG và status báo lỗi; không tự tải model lúc nhận request. YuNet
+chỉ hỗ trợ tìm mặt, không thay ngưỡng nhận dạng hoặc chống giả mạo. Nhánh HOG
+đã nhận mặt vẫn giữ box/profile cũ nên chỉ bật detector không buộc đăng ký lại.
+Nếu đổi cấu hình căn mắt/CLAHE/mirror thì vẫn cần đăng ký lại theo profile mới.
+
+Khi quét, quay chậm khoảng 18° trái/phải hoặc 12° lên/xuống theo hướng dẫn,
+không quay ngang hẳn. Mất mặt/nhòe thoáng qua không xóa các bước đã hoàn thành;
+bước hiện tại phải giữ lại đủ thời gian bằng các frame mới. Mất mặt quá 5 giây,
+phát hiện spoof, nhiều người hoặc đổi người thì thử thách vẫn bị hủy.
+
+Kiểm tra lint: `python -m ruff check .` (hoặc `make lint`). Để kiểm tra giao diện
+camera bằng Chrome và webcam tổng hợp, không dùng camera thật:
+
+```powershell
+python -m pip install -r requirements-browser.txt
+python -m pytest -q tests/test_web_ui.py --run-browser
+```
+
+`make test` chạy toàn bộ unit/integration và bỏ qua nhóm Chrome khi không có
+`--run-browser`; `make test-browser` chạy riêng nhóm này. Chúng không đo độ chính
+xác PAD với ảnh in/video thực tế. Dùng `scripts/evaluate_liveness.py` với dữ liệu
+tách người như hướng dẫn FACE_ANALYSIS để đánh giá tiếp.
 
 ## Luu Y Bao Mat
 

@@ -49,6 +49,14 @@ def calculate_late_minutes(class_session: ClassSession, recorded_at: datetime) -
     return int((delta_seconds + 59) // 60)
 
 
+def _validate_event_retry(event: RecognitionEvent, session_id: int, payload: RecognitionEventCreate) -> None:
+    if (event.session_id, event.student_id, event.camera_id, event.model_version) != (
+        session_id, payload.student_id, payload.camera_id, payload.model_version
+    ):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Idempotency key belongs to a different recognition request")
+
+
 def create_recognition_event(
     db: Session,
     *,
@@ -61,6 +69,7 @@ def create_recognition_event(
         select(RecognitionEvent).where(RecognitionEvent.idempotency_key == payload.idempotency_key)
     )
     if existing_event is not None:
+        _validate_event_retry(existing_event, session_id, payload)
         attendance = db.scalar(
             select(AttendanceRecord).where(AttendanceRecord.recognized_event_id == existing_event.id)
         )
@@ -102,6 +111,7 @@ def create_recognition_event(
         )
         if existing_event is None:
             raise
+        _validate_event_retry(existing_event, session_id, payload)
         attendance = db.scalar(
             select(AttendanceRecord).where(
                 AttendanceRecord.session_id == session_id,
