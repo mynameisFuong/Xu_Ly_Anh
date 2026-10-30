@@ -1,2 +1,0 @@
--r requirements-camera.txt
-onnxruntime>=1.20,<2

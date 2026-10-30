@@ -1,101 +1,123 @@
-# API camera web và liveness
+# API camera và nhận diện điểm danh
 
-OpenAPI đầy đủ ở `/docs` hoặc `/openapi.json`. Giữ các endpoint nghiệp vụ hiện hành;
-tài liệu này mô tả hợp đồng bổ sung cho client camera.
+OpenAPI đầy đủ ở /docs hoặc /openapi.json. Liveness đã được gỡ; endpoint
+/sessions/{id}/liveness-challenge và schema WebLivenessState không còn tồn tại.
 
 ## Xác thực
 
-Web/desktop dùng `X-User-Id` của tài khoản admin/teacher/user đang hoạt động theo cơ
-chế demo hiện tại. Camera worker tin cậy dùng `X-Camera-Token`; không đưa token này
-vào mã web/localStorage. Production phải thay xác thực demo bằng phiên đăng nhập
-được xác thực, TLS và khóa camera riêng có thể thu hồi trước triển khai công khai.
+Web/desktop dùng X-User-Id theo cơ chế tài khoản demo. Worker tin cậy dùng
+X-Camera-Token; token không được đưa vào mã frontend. Quyền tài khoản,
+consent, lớp học và trạng thái phiên vẫn được kiểm tra phía backend.
 
 ## Trạng thái pipeline
 
-`GET /face-analysis/status` (web), `GET /camera/pipeline` (camera token).
-Trả engine/profile, mode, backend PAD, ready, approved, allow_pretrained,
-`web_liveness_required`, `web_liveness_ready` và metrics tổng hợp.
-`web_liveness_message` giải thích readiness: chưa bật enforce, thiếu engine, thiếu
-model/dependency, chưa duyệt hoặc đã sẵn sàng. Thông báo không trả exception/secret.
-`face_detection` trả `backend`, `yunet_ready`, lỗi tổng quát và các bộ đếm rescue
-khi hybrid được cấu hình; không trả đường dẫn model. HOG vẫn dùng được nếu thiếu
-model YuNet. `metrics.counts.no_face` giúp theo dõi mất mặt mà không giữ ảnh.
-Bộ đếm rescue tính mỗi lần gọi detector, bao gồm canvas xoay; không dùng tỷ số
-rescue/frames làm độ chính xác hoặc tỷ lệ bỏ sót.
-Không có embedding, ảnh, danh tính hoặc đường dẫn model. `ready=true` chỉ chứng minh model đã nạp,
-không chứng minh độ chính xác; `approved=false + allow_pretrained=true` là thử local.
+GET /face-analysis/status dành cho tài khoản có quyền.
+GET /camera/pipeline dành cho worker có camera token.
 
-## Tạo thử thách
+Response có engine, model_version, preprocessing_mode, preprocessing_version,
+preprocessing_profile, shadow_candidate_profile, shadow_sample_rate, face_detection và metrics.
+face_detection gồm backend, yunet_ready và metrics tổng hợp. Không trả ảnh,
+embedding hoặc đường dẫn model. Khi preprocessing off, camera/pipeline không
+bắt buộc backend nạp thư viện nhận diện. Không còn các trường liveness_*.
+Metrics có analysis_p50_ms/analysis_p95_ms, shadow_p95_ms và các bộ đếm tổng hợp.
+Shadow lấy mẫu không thay embedding hay quyết định của pipeline đang enforce.
+Pipeline còn trả `stream_recognition=true`, `stream_max_faces_per_frame` và
+`stream_confirmation_hits` để client chọn luồng nhiều mặt.
 
-`POST /sessions/{id}/liveness-challenge`, body `{}`, yêu cầu buổi đang mở.
+## Stream nhiều khuôn mặt
+
+Web/desktop dùng `POST /sessions/{id}/scan-stream` với `X-User-Id`.
+Worker dùng `POST /sessions/{id}/camera-scan-stream?dry_run=false` với
+`X-Camera-Token`. Hai endpoint dùng cùng body:
 
 ```json
 {
-  "status": "pending",
-  "challenge_id": "opaque-random-id",
-  "step_token": "opaque-current-step-nonce",
-  "sequence": 0,
-  "action": "center",
-  "step": 0,
-  "total_steps": 7,
-  "expires_in_seconds": 45,
-  "message": "Nhìn thẳng và giữ yên khuôn mặt"
+  "camera_id": "browser-camera",
+  "stream_id": "uuid-moi-cho-moi-lan-bat-dau",
+  "frame_id": 0,
+  "image_base64": "data:image/jpeg;base64,..."
 }
 ```
 
-404 nếu không có buổi; 409 nếu buổi đóng; 503 nếu PAD enforce/engine chưa sẵn sàng.
-Khi `WEB_LIVENESS_REQUIRED=false`, trả `status=off` cho môi trường tương thích được
-quản trị viên chủ động cấu hình. Client không được tự tắt policy.
+`camera_id` và `stream_id` dài 1–80 ký tự. `frame_id` tăng dần từ 0, tối đa
+2.147.483.647; mỗi luồng chỉ gửi một request tại một thời điểm. Giới hạn base64
+là 2,8 triệu ký tự. Khi nhận response, chụp frame live mới rồi gửi tiếp;
+không xếp hàng các frame cũ và không dừng sau khi điểm danh thành công.
 
-## Gửi frame
+Response có `frame_id`, `frame_width`, `frame_height`, `faces`, `message`,
+`processing_ms`, `next_frame_delay_ms`. Mỗi phần tử `faces` gồm:
 
-`POST /sessions/{id}/scan-frame` (web/desktop):
+- Các trường của kết quả một mặt: `decision`, `message`, `face_box`,
+  `student_id`, `student_code`, `full_name`, `attendance`, `already_recorded`,
+  `candidate_score`, `second_score`, `class_label`, `class_name`.
+- `track_id`, `confirmation_hits`, `confirmation_required` để vẽ box và tiến độ.
+  `face_box` là `[x,y,width,height]` theo ảnh nguồn sau áp EXIF; preview mirror
+  chỉ là cách hiển thị phía client. `track_id` là mã theo dõi hình học tạm thời,
+  không phải danh tính sinh viên.
+
+Mỗi mặt được xác nhận độc lập bằng các lần so khớp mới. Mặc định cần ba lần
+trong cửa sổ 30 giây; không phải chờ đủ 30 giây. `pending`, `unknown`,
+`low_confidence`, `review` đều hiển thị vàng. Chỉ `recognized` cùng `attendance`
+khác null mới được báo xanh/ghi log thành công. Tên/MSSV chưa được trả trong
+giai đoạn chờ xác nhận. Khung đã mất hoặc quá hạn phải được xóa; client không
+được lấy danh tính từ box cũ để gửi sự kiện điểm danh.
+
+Backend vẫn kiểm tra lớp, đủ năm góc cùng profile, consent và phiên đang mở.
+Một người chỉ có một bản ghi điểm danh trong phiên; bản ghi có sẵn trả
+`already_recorded=true`, không ghi thêm sự kiện/ảnh chứng cứ. Kết quả điều chỉnh
+thủ công được giữ nguyên; trạng thái cần giảng viên kiểm tra trả `review`.
+`dry_run=true` xác nhận riêng, không dùng chung phiếu với luồng thật và không ghi DB.
+
+Frame lặp/cũ trả 409; luồng đang có request xử lý hoặc hết slot trả 429. Client
+tự thử lại với frame mới sau một khoảng nghỉ, không tăng phiếu bằng cách gửi
+lại cùng `frame_id`. Base64/ảnh hỏng trả 400, payload sai/vượt giới hạn trả 422,
+phiên không tồn tại trả 404, phiên đóng trả 409. Khi phiên đóng, dừng gửi frame.
+
+Xem [hướng dẫn vận hành và giới hạn hiệu năng](STREAM_RECOGNITION.md).
+
+## API một mặt tương thích cũ
+
+POST /sessions/{id}/scan-frame:
 
 ```json
 {
   "camera_id": "browser-camera",
   "image_base64": "data:image/jpeg;base64,...",
-  "idempotency_key": "new-uuid",
-  "challenge_id": "id-from-server",
-  "step_token": "nonce-from-latest-response",
-  "sequence": 0
+  "idempotency_key": "new-uuid"
 }
 ```
 
-Giới hạn base64 2.8 triệu ký tự. Không gửi đồng thời nhiều frame; dùng sequence và
-step_token server trả về, không tự tăng vượt bước. Ảnh là pixel canvas gốc, video
-chỉ mirror bằng CSS. Không gửi pose/live do client tính để quyết định điểm danh.
+Giới hạn base64 2,8 triệu ký tự, camera_id tối đa 80 ký tự. Client gửi một frame
+tại một thời điểm; preview mirror bằng CSS không làm lật ảnh gửi đi.
+Các trường challenge_id, step_token, sequence cũ không còn trong schema;
+nếu client cũ vẫn gửi thì Pydantic bỏ qua như các trường thừa thông thường.
 
-Response có `decision`, `message`, `face_box` xywh theo pixel gốc, `liveness`:
+Response giữ decision, message, face_box (xywh theo ảnh đã giải mã/áp EXIF), student_id,
+student_code, full_name, attendance và already_recorded. Không còn trường liveness.
 
-Frame tạm mất mặt/không đạt chất lượng có thể trả `decision=unknown` cùng
-`liveness.status=pending`, giữ `challenge_id` và bước, tăng sequence. Client dùng
-nguyên state mới cho frame tiếp theo, không tạo thử thách mới. Frame đó không
-được tính vào hold/hits và không kéo dài TTL/max-gap. Không giữ box/danh tính cũ
-để vẽ thành kết quả mới. Spoof/nhiều mặt/đổi người/sai protocol vẫn trả failed.
+- Ảnh nguồn không đạt chất lượng, nhiều mặt hoặc không tìm được mẫu phù hợp:
+  không ghi DB và không trả danh tính.
+- Chỉ dùng mẫu đủ năm góc, còn consent, được ghi danh trong lớp và cùng
+  model_version với recognizer. Không ghép các profile khác nhau.
+- Chỉ báo thành công khi decision=recognized và attendance khác null.
+- Bản ghi trùng trả already_recorded=true, không tạo thêm sự kiện/ảnh chứng cứ.
+- Base64 hỏng trả 400; vượt giới hạn payload trả 422; phiên không tồn tại trả
+  404; phiên đã đóng trả 409.
 
-| status | Client xử lý | Ghi điểm danh |
-|---|---|---|
-| required | Tạo thử thách mới | Không |
-| pending | Hiển thị action/message, gửi frame mới với state vừa nhận | Không |
-| failed | Hiển thị lý do, bắt đầu lại nếu người dùng tiếp tục quét | Không |
-| unavailable | Dừng quét, kiểm tra model/cấu hình | Không |
-| passed | Kiểm tra `decision=recognized` và `attendance` trước báo thành công | Có nếu nghiệp vụ chấp nhận |
+## Worker
 
-Pending/failed không trả student_id/họ tên. Pass tiêu thụ thử thách một lần, chỉ
-nhận diện cùng người trong roster đã đồng ý, đủ 5 góc cùng profile. Bản ghi trùng
-trả `already_recorded=true`; không tạo thêm sự kiện/ảnh. Mỗi lần xác minh mới vẫn
-cần thử thách mới. Khung hỏng trả 400; payload quá giới hạn trả 422.
+POST /sessions/{id}/camera-scan-frame?stream_id=...&dry_run=true dùng cùng body
+và camera token. stream_id tối đa 80 ký tự; worker dùng một UUID cho mỗi luồng.
+Backend xác nhận đủ nhiều frame theo ATTENDANCE_MIN_HITS/WINDOW_SECONDS,
+reset khi frame bị từ chối hoặc đổi ứng viên. Đây là ổn định nhận diện, không
+phải kiểm tra chống ảnh in/video. dry_run không ghi sự kiện, điểm danh hoặc ảnh.
 
-## Worker và thao tác quản trị
+POST /sessions/{id}/recognition-events vẫn dành cho worker tin cậy có token.
+Không còn điều kiện PAD, nhưng quyền, consent và các quy tắc nghiệp vụ giữ nguyên.
 
-`POST /sessions/{id}/camera-scan-frame?stream_id=...&dry_run=true` giữ hợp đồng cũ,
-token camera tin cậy, PAD enforce và xác nhận nhiều frame. Worker không thực hiện
-thử thách hướng dẫn người dùng trên web. `dry_run` không tạo sự kiện/bản ghi/ảnh.
-`POST /sessions/{id}/recognition-events` từ chối recognized tự khai khi PAD enforce.
+## Đăng ký và thao tác thủ công
 
-Các endpoint `/students/{id}/face-enrollment/scan`, upload/import kiểm tra PAD
-theo cùng pipeline; chỉ tài khoản giáo viên/admin dùng được, cần consent. Đăng ký
-vẫn phải được giám sát, không sử dụng kết quả import như bằng chứng hiện diện.
-Thủ công qua `PUT /sessions/{id}/attendance/{student_id}` tiếp tục yêu cầu quyền,
-lý do và audit. Các quy tắc đúng giờ/trễ/vắng không thay đổi.
+/students/{id}/face-enrollment/scan vẫn hướng dẫn đủ năm góc để tạo mẫu nhận diện,
+không phải thử thách trong luồng điểm danh. Upload/import dùng cùng preprocessing
+và quality gate. PUT /sessions/{id}/attendance/{student_id} vẫn yêu cầu quyền,
+lý do và audit. Quy tắc đúng giờ/trễ/vắng không đổi.

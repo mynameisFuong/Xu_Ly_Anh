@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 
 from ai_pipeline.quality import assess_face_quality
+from ai_pipeline.preprocessing import decode_bgr_image
 
 if TYPE_CHECKING:
     from ai_pipeline.analysis import AnalysisDiagnostics
@@ -31,6 +32,14 @@ class EmbeddingResult:
     pose: PoseResult | None = None
     face_box: tuple[int, int, int, int] | None = None
     diagnostics: "AnalysisDiagnostics | None" = None
+
+
+@dataclass(frozen=True)
+class FrameEmbeddingResult:
+    faces: tuple[EmbeddingResult, ...]
+    width: int
+    height: int
+    reason: str | None = None
 
 
 @dataclass(frozen=True)
@@ -123,19 +132,17 @@ class FaceRecognizer:
     legacy demos running and cannot be used for guided Face ID enrollment.
     """
 
-    def __init__(self, cascade_path: str | None = None, *, preprocessing=None,
-                 liveness=None, liveness_mode: str = "off", detection=None) -> None:
+    def __init__(self, cascade_path: str | None = None, *, preprocessing=None, detection=None) -> None:
         self._lock = RLock()
         self._face_detector = None
         self._analysis = None
-        if preprocessing is not None or liveness_mode != "off":
+        if preprocessing is not None:
             from ai_pipeline.analysis import FaceAnalysis
             from ai_pipeline.preprocessing import PreprocessingOptions
 
             options = preprocessing or PreprocessingOptions()
-            if options.mode != "off" or liveness_mode != "off":
-                self._analysis = FaceAnalysis(self, preprocessing=options, liveness=liveness,
-                                              liveness_mode=liveness_mode)
+            if options.mode != "off":
+                self._analysis = FaceAnalysis(self, preprocessing=options)
         try:
             import face_recognition as face_recognition_lib
         except (ImportError, RuntimeError):
@@ -168,11 +175,7 @@ class FaceRecognizer:
             self.model_version += ":" + preprocessing.profile
 
     def extract_single_embedding(self, image_bytes: bytes, *, num_jitters: int = 1) -> EmbeddingResult:
-        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-        try:
-            frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR) if image_array.size else None
-        except cv2.error:
-            frame = None
+        frame = decode_bgr_image(image_bytes)
         if frame is None:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Cannot decode image")
         with getattr(self, "_lock", nullcontext()):
@@ -182,17 +185,76 @@ class FaceRecognizer:
                 return self._extract_dlib(frame, num_jitters=num_jitters)
             return self._extract_fallback(frame)
 
-    def _extract_dlib(self, frame: np.ndarray, *, num_jitters: int) -> EmbeddingResult:
+    def extract_frame_embeddings(self, image_bytes: bytes, *, max_faces: int = 8,
+                                 offset: int = 0, num_jitters: int = 1) -> FrameEmbeddingResult:
+        """Attendance-only batch API; enrollment still rejects multiple faces."""
+        if max_faces < 1:
+            raise ValueError("max_faces must be positive")
+        frame = decode_bgr_image(image_bytes)
+        if frame is None:
+            return FrameEmbeddingResult((), 0, 0, "Cannot decode image")
+        with getattr(self, "_lock", nullcontext()):
+            analysis = getattr(self, "_analysis", None)
+            faces = (analysis.analyze_many(frame, max_faces=max_faces, offset=offset, num_jitters=num_jitters)
+                     if analysis is not None else self._extract_many(frame, None, max_faces=max_faces,
+                                                                   offset=offset, num_jitters=num_jitters))
+        return FrameEmbeddingResult(tuple(faces), frame.shape[1], frame.shape[0], None if faces else "No face detected")
+
+    def _extract_many(self, frame, options, *, max_faces, offset, num_jitters):
+        from ai_pipeline.preprocessing import orient_image, source_box
+        from ai_pipeline.detection import box_iou
+
+        analysis = getattr(self, "_analysis", None)
+        if options is not None:
+            prepared, boxes, attempts, elapsed = analysis._detect_frame(frame, options)
+        else:
+            prepared, attempts, elapsed = orient_image(frame), 1, 0
+            boxes = self.detect_faces(frame)
+        # Hybrid detectors may overlap. Never count the same physical box twice.
+        unique = []
+        for box in sorted(boxes, key=lambda value: (-value[2] * value[3], value[0], value[1])):
+            if not any(box_iou(box, existing) >= 0.6 for existing in unique):
+                unique.append(box)
+        unique.sort(key=lambda box: (box[0], box[1], box[2], box[3]))
+        selected = {(offset + index) % len(unique) for index in range(min(max_faces, len(unique)))} if unique else set()
+        results = []
+        for index, box in enumerate(unique):
+            native_box = source_box(prepared, box, frame.shape)
+            if native_box is None:
+                continue
+            if index not in selected:
+                results.append(EmbeddingResult(False, np.empty(0, np.float32), reason="Waiting for face processing",
+                                               face_box=native_box))
+                continue
+            try:
+                if options is not None:
+                    result = analysis._process(frame, options, num_jitters=num_jitters,
+                                               detection=(prepared, [box], attempts, elapsed), include_pose=False)
+                elif self._face_recognition is not None:
+                    x, y, w, h = box
+                    result = self._extract_dlib(frame, num_jitters=num_jitters, locations=[(y, x + w, y + h, x)], include_pose=False)
+                else:
+                    result = self._extract_fallback(frame, boxes=[box])
+            except (ValueError, RuntimeError, cv2.error, np.linalg.LinAlgError):
+                result = EmbeddingResult(False, np.empty(0, np.float32), reason="Cannot encode face", face_box=native_box)
+            results.append(result)
+        return results
+
+    def _extract_dlib(self, frame: np.ndarray, *, num_jitters: int, locations=None, include_pose=True) -> EmbeddingResult:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        locations = self._face_recognition.face_locations(rgb, number_of_times_to_upsample=1, model="hog")
+        if locations is None:
+            locations = self._face_recognition.face_locations(rgb, number_of_times_to_upsample=1, model="hog")
         if not locations:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="No face detected")
         if len(locations) > 1:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="Multiple faces detected")
         top, right, bottom, left = locations[0]
+        height, width = frame.shape[:2]
+        left, top, right, bottom = max(0, left), max(0, top), min(width, right), min(height, bottom)
         face_box = (left, top, right - left, bottom - top)
+        locations = [(top, right, bottom, left)]
         quality = assess_face_quality(frame[top:bottom, left:right])
-        landmarks = self._face_recognition.face_landmarks(rgb, locations, model="large")
+        landmarks = self._face_recognition.face_landmarks(rgb, locations, model="large") if include_pose else []
         pose = estimate_head_pose(landmarks[0], frame.shape) if landmarks else None
         if not quality.accepted:
             return EmbeddingResult(
@@ -209,8 +271,8 @@ class FaceRecognizer:
             )
         return EmbeddingResult(True, encodings[0].astype(np.float32), quality.score, pose=pose, face_box=face_box)
 
-    def _extract_fallback(self, frame: np.ndarray) -> EmbeddingResult:
-        faces = self.detect_faces(frame)
+    def _extract_fallback(self, frame: np.ndarray, *, boxes=None) -> EmbeddingResult:
+        faces = self.detect_faces(frame) if boxes is None else boxes
         if not faces:
             return EmbeddingResult(False, np.empty(0, dtype=np.float32), reason="No face detected")
         if len(faces) > 1:
@@ -259,11 +321,8 @@ class FaceRecognizer:
         ok, encoded = cv2.imencode(".jpg", frame_bgr)
         if not ok:
             return []
-        result = self.extract_single_embedding(encoded.tobytes())
-        if getattr(self, "_analysis", None) is not None:
-            return [(result.face_box, result.embedding)] if result.accepted and result.face_box is not None else []
-        faces = self.detect_faces(frame_bgr)
-        return [(faces[0], result.embedding)] if result.accepted and len(faces) == 1 else []
+        result = self.extract_frame_embeddings(encoded.tobytes())
+        return [(face.face_box, face.embedding) for face in result.faces if face.accepted and face.face_box is not None]
 
     @staticmethod
     def _fallback_embedding(face_bgr: np.ndarray) -> np.ndarray:

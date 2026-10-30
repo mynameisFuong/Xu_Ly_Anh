@@ -1,3 +1,8 @@
+> Tài liệu lịch sử: liveness/PAD đã được gỡ theo yêu cầu ngày 30/10/2026.
+> Nội dung/kết quả bên dưới thuộc phiên bản trước, không phải hướng dẫn vận hành
+> hiện hành. Xem [pipeline hiện tại](FACE_ANALYSIS.md) và
+> [kế hoạch preprocessing](PREPROCESSING_UPGRADE_PLAN.md).
+
 # Chọn dữ liệu huấn luyện và đánh giá PAD
 
 ## Kết luận
@@ -24,7 +29,7 @@ sẵn; ảnh đăng ký trong hệ thống chỉ dùng làm template đối chi�
 Chúng không mang nhãn tấn công `print`/`replay` và không đủ để huấn luyện PAD.
 
 Backend hiện cấu hình `LIVENESS_BACKEND=minifasnet` với trọng số pretrained.
-[`train_liveness.py`](../scripts/train_liveness.py) huấn luyện **backend khác**:
+`train_liveness.py` (đã gỡ) huấn luyện **backend khác**:
 HOG + DFT + SVM. Nó không fine-tune dlib hoặc MiniFASNet. Đầu vào của script
 là ảnh BGR từ camera, có đúng một mặt, mặt tối thiểu 80 px và đạt quality gate.
 [`test_preprocessing.py`](../tests/test_preprocessing.py) chỉ kiểm tra hình học,

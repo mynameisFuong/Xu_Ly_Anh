@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     face_distance_threshold: float = 0.52
     face_distance_margin: float = 0.04
     enrollment_num_jitters: int = 3
+    stream_max_faces_per_frame: int = Field(default=8, ge=1, le=32)
+    stream_confirmation_window_seconds: int = Field(default=30, ge=4, le=120)
     face_detection_backend: Literal["hog", "hybrid", "yunet"] = "hog"
     face_detection_model_path: Path = Path("storage/face-models/face_detection_yunet_2023mar.onnx")
     face_detection_score_threshold: float = Field(default=0.9, ge=0.5, lt=1)
@@ -28,20 +30,27 @@ class Settings(BaseSettings):
     preprocessing_search_rolls: bool = True
     preprocessing_mirror_input: bool = False
     preprocessing_max_roll_degrees: float = Field(default=40, gt=0, le=60)
-    liveness_mode: Literal["off", "shadow", "enforce"] = "off"
-    liveness_model_dir: Path | None = None
-    liveness_backend: Literal["hog-svm", "minifasnet"] = "hog-svm"
-    liveness_live_threshold: float = Field(default=0.90, gt=0.5, lt=1)
-    liveness_allow_pretrained: bool = False
-    web_liveness_required: bool = True
-    web_liveness_ttl_seconds: float = Field(default=45, ge=10, le=120)
-    web_liveness_max_gap_seconds: float = Field(default=5, ge=1, le=15)
-    web_liveness_min_interval_seconds: float = Field(default=0.25, ge=0.1, le=2)
-    web_liveness_hold_seconds: float = Field(default=0.5, ge=0.2, le=3)
-    web_liveness_min_hits: int = Field(default=2, ge=2, le=6)
-    web_liveness_identity_distance: float = Field(default=0.5, gt=0, le=0.6)
-    web_liveness_yaw_degrees: float = Field(default=18, ge=12, le=30)
-    web_liveness_pitch_degrees: float = Field(default=12, ge=8, le=25)
+    preprocessing_version: Literal["v1", "v2"] = "v1"
+    preprocessing_lighting_method: Literal["none", "adaptive", "gamma", "clahe"] = "adaptive"
+    preprocessing_denoise_method: Literal["off", "adaptive", "median", "bilateral"] = "off"
+    preprocessing_v2_align_eyes: bool = False
+    preprocessing_roi_padding: float = Field(default=0.25, ge=0, le=0.5)
+    preprocessing_gamma_min: float = Field(default=0.65, gt=0, le=1)
+    preprocessing_gamma_max: float = Field(default=1.4, ge=1, le=2)
+    preprocessing_clahe_clip_limit: float = Field(default=1.5, gt=0, le=4)
+    preprocessing_max_detection_attempts: int = Field(default=8, ge=1, le=8)
+    # Sample v2 alongside an enforced v1 without changing its templates/decisions.
+    preprocessing_shadow_v2: bool = True
+    preprocessing_shadow_sample_rate: float = Field(default=0.1, ge=0, le=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def ignore_retired_liveness_settings(cls, values):
+        # Old .env files must still boot; retired switches cannot reactivate PAD.
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items()
+                    if not key.lower().startswith(("liveness_", "web_liveness_"))}
+        return values
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

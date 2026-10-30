@@ -52,27 +52,20 @@
                 <div>
                   <h2>Camera nhận diện</h2>
                   <p>
-                    Quét tự động từng khung hình khi buổi điểm danh đang mở.
+                    Nhận diện nhiều người liên tục. Người đã có khung xanh có thể rời camera;
+                    những người còn lại tiếp tục chờ trong khung hình.
                   </p>
                 </div>
                 <span id="scanBadge" class="badge pending">Chưa quét</span>
               </div>
               <div class="camera-box attendance-camera" id="attendanceCamera">
                 <video id="scanVideo" autoplay muted playsinline></video>
-                <div id="scanFaceBox" class="scan-face-box" hidden>
-                  <div id="scanFaceLabel" class="scan-face-label" hidden>
-                    <strong id="scanFaceName"></strong>
-                    <span id="scanFaceCode"></span>
-                  </div>
-                </div>
-                <span class="camera-hint">Giữ khuôn mặt ở giữa khung hình</span>
+                <div id="scanGuide" class="scan-face-box scan-guide" aria-label="Vùng quét nhiều khuôn mặt" hidden></div>
+                <div id="scanFaces" class="scan-faces" aria-label="Kết quả từng khuôn mặt"></div>
+                <span class="camera-hint">Camera có thể nhận diện nhiều người cùng lúc</span>
               </div>
               <canvas id="scanCanvas" width="640" height="480" hidden></canvas>
-              <div id="livenessPanel" class="liveness-panel" role="status" aria-live="polite">
-                <strong id="livenessTitle">Xác minh người thật</strong>
-                <p id="livenessHint">Đang kiểm tra chức năng chống giả mạo…</p>
-                <progress id="livenessProgress" max="7" value="0" aria-label="Tiến độ xác minh"></progress>
-              </div>
+              <p id="scanFeedback" class="scan-feedback" role="status" aria-live="polite">Bật quét liên tục. Giữ khuôn mặt đủ rõ cho đến khi khung chuyển xanh.</p>
               <div class="actions" style="margin-top: 15px">
                 <button id="scanCamera" class="btn secondary">Bật camera</button
                 ><button id="scanToggle" class="btn">Bắt đầu quét</button>

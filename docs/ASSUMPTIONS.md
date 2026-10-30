@@ -1,17 +1,17 @@
 # Các giả định triển khai
 
-- Giữ mô hình điểm danh lớp học của hệ thống hiện tại; ánh xạ `employee` trong đặc tả tham chiếu thành `student`, `shift` thành `class session`.
-- Bản demo chạy local trên Windows, một cơ sở đào tạo, một camera cho mỗi máy trạm và SQLite để dễ trình diễn.
-- Quản trị viên demo có `X-User-Id=1`; cơ chế này chỉ dành cho demo nội bộ, không phải cấu hình production.
-- `ageitgey/face_recognition` với dlib ResNet là engine Face ID đa góc. OpenCV histogram chỉ là dự phòng cho bản demo cũ và không tham gia đăng ký đa góc.
-- Ảnh minh chứng và ảnh đăng ký được lưu cục bộ trong `storage/`, chỉ người có quyền quản trị/giảng viên được truy cập qua API.
-- Web mới dùng PAD + thử thách ngẫu nhiên do server xác minh. Webcam RGB/CPU và
-  khung 640×480 là môi trường thử nghiệm ban đầu. Không có tập dữ liệu thực địa
-  được cấp phép trong repo nên chưa xác nhận APCER/BPCER hay khả năng chống deepfake.
-- Có thể dùng bộ MiniFASNet pretrained đã kiểm checksum để thử local khi chủ động
-  bật `LIVENESS_ALLOW_PRETRAINED`; không tự coi model đó đã được đánh giá/duyệt.
-- MVP chạy một process backend cho state thử thách. Scale nhiều process phải dùng
-  store dùng chung có TTL và thao tác consume nguyên tử trước khi nghiệm thu.
-- Người dùng phản ánh mất mặt khoảng 30% khi quay đầu; đây là quan sát, chưa có
-  mẫu camera để đo độc lập. Bổ sung YuNet hỗ trợ HOG và phục hồi frame mất mặt
-  ngắn; không khẳng định tỷ lệ bỏ sót mới trước khi thử trên webcam thực tế.
+- Giữ mô hình điểm danh lớp học: student, class và class session.
+- Bản demo chạy local trên Windows, SQLite và một camera cho mỗi máy trạm.
+- X-User-Id là cơ chế demo nội bộ; camera worker dùng token riêng.
+- Engine Face ID là ageitgey/face_recognition + dlib ResNet 128D; OpenCV histogram
+  là fallback demo và không hỗ trợ đăng ký đa góc.
+- Ảnh chứng cứ và ảnh đăng ký lưu cục bộ trong storage; API kiểm tra quyền truy cập.
+- Liveness/PAD và thử thách quay đầu đã được gỡ theo yêu cầu 30/10/2026.
+  Nhận diện hiện tại không kiểm chứng chống ảnh in/video phát lại.
+- Enrollment vẫn cần đủ năm góc và cùng profile preprocessing với điểm danh.
+- YuNet hỗ trợ HOG khi detector mất mặt; chưa khẳng định cải thiện độ chính xác
+  trước khi benchmark trên camera thực tế.
+- State xác nhận nhiều frame của worker hiện ở RAM một process. Triển khai nhiều
+  process phải có chiến lược định tuyến/store chung nếu cần duy trì chuỗi xác nhận.
+- Nâng cấp thuật toán mới được đề xuất trong
+  [PREPROCESSING_UPGRADE_PLAN.md](PREPROCESSING_UPGRADE_PLAN.md), chưa tự bật.

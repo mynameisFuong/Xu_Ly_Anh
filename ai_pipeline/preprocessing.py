@@ -18,13 +18,45 @@ class PreprocessingOptions:
     search_rolls: bool = True
     mirror_input: bool = False
     max_roll_degrees: float = 40.0
+    version: str = "v1"
+    lighting_method: str = "adaptive"
+    denoise_method: str = "off"
+    v2_align_eyes: bool = False
+    roi_padding: float = 0.25
+    gamma_min: float = 0.65
+    gamma_max: float = 1.4
+    clahe_clip_limit: float = 1.5
+    max_detection_attempts: int = 8
+    shadow_v2: bool = False
+    shadow_sample_rate: float = 1.0
+
+    def __post_init__(self):
+        if self.mode not in {"off", "shadow", "enforce"} or self.version not in {"v1", "v2"}:
+            raise ValueError("Invalid preprocessing mode or version")
+        if self.lighting_method not in {"none", "adaptive", "gamma", "clahe"}:
+            raise ValueError("Unsupported lighting method")
+        if self.denoise_method not in {"off", "adaptive", "median", "bilateral"}:
+            raise ValueError("Unsupported denoising method")
+        if not (0 < self.gamma_min <= 1 <= self.gamma_max <= 2):
+            raise ValueError("Gamma bounds must contain 1 and lie in (0, 2]")
+        if not (0 <= self.roi_padding <= 0.5 and 0 < self.clahe_clip_limit <= 4):
+            raise ValueError("Unsafe ROI padding or CLAHE clip limit")
+        if not (0 < self.max_roll_degrees <= 60 and 1 <= self.max_detection_attempts <= 8):
+            raise ValueError("Unsafe roll or detection search limit")
+        if not 0 <= self.shadow_sample_rate <= 1:
+            raise ValueError("Shadow sample rate must lie in [0, 1]")
 
     @property
     def profile(self) -> str:
-        values = dict(vars(self))
-        values.pop("mode")
+        # Keep the original hash byte-for-byte: existing templates remain usable.
+        legacy = ("align_eyes", "normalize_lighting", "search_rotations", "search_rolls",
+                  "mirror_input", "max_roll_degrees")
+        values = {name: getattr(self, name) for name in legacy}
+        if self.version == "v2":
+            values = {name: value for name, value in vars(self).items()
+                      if name not in {"mode", "shadow_v2", "shadow_sample_rate", "align_eyes"}}
         payload = json.dumps(values, sort_keys=True).encode()
-        return "pre-v1-" + sha256(payload).hexdigest()[:10]
+        return f"pre-{self.version}-" + sha256(payload).hexdigest()[:10]
 
 
 @dataclass(frozen=True)
@@ -39,6 +71,15 @@ def validate_bgr(image: np.ndarray) -> None:
         raise ValueError("Expected uint8 BGR image")
     if image.ndim != 3 or image.shape[2] != 3 or min(image.shape[:2]) == 0:
         raise ValueError("Expected nonempty H x W x 3 BGR image")
+
+
+def decode_bgr_image(image_bytes: bytes) -> np.ndarray | None:
+    """OpenCV applies EXIF once. All downstream coordinates use this decoded image."""
+    encoded = np.frombuffer(image_bytes, dtype=np.uint8)
+    try:
+        return cv2.imdecode(encoded, cv2.IMREAD_COLOR) if encoded.size else None
+    except cv2.error:
+        return None
 
 
 def orient_image(image: np.ndarray, *, rotation: int = 0, mirror: bool = False) -> PreparedFrame:
@@ -107,7 +148,8 @@ def source_box(prepared: PreparedFrame, box, source_shape):
     return transform_box(box, np.linalg.inv(prepared.source_to_image), source_shape)
 
 
-def align_eyes(prepared: PreparedFrame, landmarks: dict, *, max_roll_degrees: float = 40) -> PreparedFrame:
+def align_eyes(prepared: PreparedFrame, landmarks: dict, *, max_roll_degrees: float = 40,
+               source_image: np.ndarray | None = None) -> PreparedFrame:
     eyes = [np.asarray(landmarks.get(name, []), dtype=np.float64) for name in ("left_eye", "right_eye")]
     if any(eye.ndim != 2 or eye.shape[1] != 2 or len(eye) < 2 or not np.isfinite(eye).all() for eye in eyes):
         raise ValueError("Reliable eye landmarks are unavailable")
@@ -126,10 +168,82 @@ def align_eyes(prepared: PreparedFrame, landmarks: dict, *, max_roll_degrees: fl
         return prepared
     center = tuple(float(value) for value in (left + right) / 2)
     affine = cv2.getRotationMatrix2D(center, angle, 1.0)
-    image = cv2.warpAffine(prepared.image, affine, (w, h), flags=cv2.INTER_LINEAR,
-                           borderMode=cv2.BORDER_REFLECT_101)
     matrix = np.vstack([affine, [0, 0, 1]])
-    return PreparedFrame(image, matrix @ prepared.source_to_image, prepared.operations + ("align-eyes",))
+    combined = matrix @ prepared.source_to_image
+    # v2 renders from native pixels once, even after a detection rescue warp.
+    pixels = prepared.image if source_image is None else source_image
+    render_matrix = affine if source_image is None else combined[:2]
+    image = cv2.warpAffine(pixels, render_matrix, (w, h), flags=cv2.INTER_LINEAR,
+                           borderMode=cv2.BORDER_REFLECT_101)
+    return PreparedFrame(image, combined, prepared.operations + ("align-eyes",))
+
+
+def native_face_region(source: np.ndarray, prepared: PreparedFrame, box):
+    """Return native pixels and a polygon mask, excluding rotated background."""
+    x, y, w, h = box
+    corners = np.array([[x, y, 1], [x + w - 1, y, 1],
+                        [x + w - 1, y + h - 1, 1], [x, y + h - 1, 1]], np.float64)
+    mapped = corners @ np.linalg.inv(prepared.source_to_image).T
+    points = mapped[:, :2] / mapped[:, 2:3]
+    sh, sw = source.shape[:2]
+    if (not np.isfinite(points).all() or np.any(points < -0.5)
+            or np.any(points[:, 0] > sw - 0.5) or np.any(points[:, 1] > sh - 0.5)):
+        raise ValueError("Face is clipped")
+    native_box = source_box(prepared, box, source.shape)
+    if native_box is None:
+        raise ValueError("Empty face crop")
+    nx, ny, nw, nh = native_box
+    mask = np.zeros((nh, nw), np.uint8)
+    cv2.fillConvexPoly(mask, np.rint(points - [nx, ny]).astype(np.int32), 255)
+    return source[ny:ny + nh, nx:nx + nw], mask
+
+
+def enhance_face_region(image: np.ndarray, box, metrics, options: PreprocessingOptions):
+    """Quality-gated luminance/noise processing on a padded ROI; BGR uint8 out."""
+    validate_bgr(image)
+    x, y, w, h = box
+    px, py = round(w * options.roi_padding), round(h * options.roi_padding)
+    left, top = max(0, x - px), max(0, y - py)
+    right, bottom = min(image.shape[1], x + w + px), min(image.shape[0], y + h + py)
+    if right <= left or bottom <= top:
+        raise ValueError("Empty face crop")
+    roi = image[top:bottom, left:right].copy()
+    operations = []
+    method = options.denoise_method
+    if method == "adaptive":
+        method = "median" if metrics.impulse_fraction >= 0.01 else (
+            "bilateral" if metrics.noise_sigma >= 4 else "off")
+    # Explicit methods are still gated: clean input should not lose texture.
+    if method == "median" and metrics.impulse_fraction >= 0.01:
+        roi = cv2.medianBlur(roi, 3)
+        operations.append("median-3")
+    elif method == "bilateral" and metrics.noise_sigma >= 4:
+        roi = cv2.bilateralFilter(roi, 5, 15, 3)
+        operations.append("bilateral-5")
+    method = options.lighting_method if options.normalize_lighting else "none"
+    if method == "adaptive":
+        method = "gamma" if metrics.brightness < 90 or metrics.brightness > 175 else (
+            "clahe" if metrics.contrast < 55 else "none")
+    ycrcb = cv2.cvtColor(roi, cv2.COLOR_BGR2YCrCb)
+    luminance = ycrcb[:, :, 0]
+    if method == "gamma" and (metrics.brightness < 90 or metrics.brightness > 175):
+        mean = np.clip(metrics.brightness / 255, 1 / 255, 254 / 255)
+        gamma = float(np.clip(math.log(120 / 255) / math.log(mean), options.gamma_min, options.gamma_max))
+        lut = np.rint(255 * (np.arange(256, dtype=np.float64) / 255) ** gamma).astype(np.uint8)
+        ycrcb[:, :, 0] = cv2.LUT(luminance, lut)
+        operations.append("gamma")
+    elif method == "clahe" and metrics.contrast < 55:
+        # Grid count adapts to small ROIs to avoid tiny noisy tiles.
+        grid = max(2, min(8, min(roi.shape[:2]) // 24))
+        ycrcb[:, :, 0] = cv2.createCLAHE(options.clahe_clip_limit, (grid, grid)).apply(luminance)
+        operations.append("clahe-roi")
+    if not operations:
+        return image.copy(), ()
+    if "gamma" in operations or "clahe-roi" in operations:
+        roi = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
+    output = image.copy()
+    output[top:bottom, left:right] = roi
+    return np.ascontiguousarray(output), tuple(operations)
 
 
 def normalize_lighting(image: np.ndarray) -> np.ndarray:

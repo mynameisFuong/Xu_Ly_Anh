@@ -217,21 +217,6 @@ class FrameScanRequest(BaseModel):
     camera_id: str = Field(default="browser-camera", max_length=80)
     image_base64: str = Field(max_length=2_800_000)
     idempotency_key: str | None = Field(default=None, max_length=120)
-    challenge_id: str | None = Field(default=None, max_length=100)
-    step_token: str | None = Field(default=None, max_length=100)
-    sequence: int | None = Field(default=None, ge=0, le=500)
-
-
-class WebLivenessState(BaseModel):
-    status: str
-    message: str | None = None
-    challenge_id: str | None = None
-    step_token: str | None = None
-    action: str | None = None
-    step: int | None = None
-    total_steps: int | None = None
-    sequence: int | None = None
-    expires_in_seconds: float | None = None
 
 
 class FrameScanResponse(BaseModel):
@@ -247,7 +232,29 @@ class FrameScanResponse(BaseModel):
     second_score: float | None = None
     attendance: AttendanceRead | None = None
     face_box: tuple[int, int, int, int] | None = None
-    liveness: WebLivenessState | None = None
+
+
+class StreamScanRequest(BaseModel):
+    camera_id: str = Field(default="browser-camera", min_length=1, max_length=80)
+    stream_id: str = Field(min_length=1, max_length=80)
+    frame_id: int = Field(ge=0, le=2_147_483_647)
+    image_base64: str = Field(max_length=2_800_000)
+
+
+class StreamFaceResult(FrameScanResponse):
+    track_id: str
+    confirmation_hits: int = 0
+    confirmation_required: int = 3
+
+
+class StreamScanResponse(BaseModel):
+    frame_id: int
+    frame_width: int
+    frame_height: int
+    faces: list[StreamFaceResult]
+    message: str
+    processing_ms: float
+    next_frame_delay_ms: int = 100
 
 
 class FaceImportItem(BaseModel):
