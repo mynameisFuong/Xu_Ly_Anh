@@ -49,6 +49,27 @@ class StudentRead(BaseModel):
     consent_status: str
 
 
+class StudentImportRow(BaseModel):
+    row_number: int
+    student_code: str
+    full_name: str
+    class_label: str | None
+    consent_status: str
+    status: str
+    message: str
+
+
+class StudentImportResult(BaseModel):
+    dry_run: bool
+    digest: str
+    total: int
+    valid: int
+    imported: int
+    skipped: int
+    failed: int
+    rows: list[StudentImportRow]
+
+
 class StudentFaceSummary(BaseModel):
     id: int
     student_code: str

@@ -42,7 +42,7 @@
     present: "Đúng giờ",
     late: "Đi trễ",
     absent: "Vắng",
-    pending: "Chưa điểm danh",
+    pending: ["students", "faces"].includes(page) ? "Chờ đồng ý" : "Chưa điểm danh",
     granted: "Đã đồng ý",
     revoked: "Đã thu hồi",
     open: "Đang mở",
@@ -274,6 +274,7 @@
         )
         .join("");
     await reloadStudents();
+    initStudentImport();
     $("studentSearch").addEventListener("input", renderStudents);
     $("studentFilter").addEventListener("change", renderStudents);
     $("newStudent").addEventListener("click", () => {
@@ -348,6 +349,103 @@
         notify(`Đã lưu sinh viên ${item.student_code}.`);
       }),
     );
+  }
+
+  function initStudentImport() {
+    const dialog = $("studentImportDialog");
+    const input = $("studentImportFile");
+    const targetClass = $("studentImportClass");
+    const previewButton = $("previewStudentImport");
+    const confirmButton = $("confirmStudentImport");
+    let preview = null, busy = false;
+    targetClass.innerHTML += classes.map((item) =>
+      `<option value="${item.id}">${esc(item.code)} · ${esc(item.name)}</option>`).join("");
+    function invalidate() {
+      preview = null;
+      confirmButton.disabled = true;
+      confirmButton.textContent = "Nhập sinh viên hợp lệ";
+      $("studentImportResults").hidden = true;
+      $("studentImportNotice").hidden = true;
+    }
+    function setBusy(value) {
+      busy = value;
+      for (const control of dialog.querySelectorAll("button, input, select")) control.disabled = value;
+      confirmButton.disabled = value || !preview?.valid;
+      dialog.setAttribute("aria-busy", String(value));
+    }
+    function showError(message) {
+      const notice = $("studentImportNotice");
+      notice.textContent = message;
+      notice.className = "notice error";
+      notice.hidden = false;
+    }
+    function render(result) {
+      $("studentImportResults").hidden = false;
+      $("studentImportSummary").textContent = result.dry_run
+        ? `${result.total} dòng · ${result.valid} hợp lệ · ${result.skipped} trùng · ${result.failed} lỗi`
+        : `Đã thêm ${result.imported} sinh viên · ${result.skipped} trùng đã bỏ qua · ${result.failed} dòng lỗi`;
+      $("studentImportRows").innerHTML = result.rows.map((item) =>
+        `<tr><td>${item.row_number}</td><td class="name-cell"><strong>${esc(item.student_code || "—")}</strong><small>${esc(item.full_name || "—")}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td class="${item.status === "error" ? "import-error" : item.status === "imported" ? "import-success" : ""}">${esc(item.message)}</td></tr>`).join("");
+    }
+    async function upload(dryRun) {
+      if (busy) return;
+      const file = input.files[0];
+      if (!file) { showError("Chọn file CSV hoặc Excel trước khi xem trước."); return; }
+      if (file.size > 5 * 1024 * 1024) { showError("File tối đa 5 MB."); return; }
+      if (!dryRun && !preview?.valid) return;
+      const form = new FormData();
+      form.append("file", file);
+      form.append("dry_run", String(dryRun));
+      if (targetClass.value) form.append("class_id", targetClass.value);
+      if (!dryRun) form.append("expected_digest", preview.digest);
+      $("studentImportNotice").hidden = true;
+      $("studentImportResults").hidden = true;
+      setBusy(true);
+      (dryRun ? previewButton : confirmButton).textContent = dryRun ? "Đang kiểm tra..." : "Đang nhập...";
+      try {
+        const result = await api("/students/import", { method: "POST", body: form });
+        render(result);
+        preview = dryRun ? result : null;
+        if (!dryRun) {
+          try { await reloadStudents(); }
+          catch (_) { showError("Đã nhập thành công. Chưa tải lại được danh sách; đóng cửa sổ và tải lại trang để xem."); }
+        }
+      } catch (error) {
+        preview = null;
+        showError(error.message);
+      } finally {
+        previewButton.textContent = "Xem trước dữ liệu";
+        confirmButton.textContent = preview?.valid ? `Nhập ${preview.valid} sinh viên hợp lệ` : "Nhập sinh viên hợp lệ";
+        setBusy(false);
+      }
+    }
+    $("openStudentImport").addEventListener("click", () => {
+      $("studentImportForm").reset();
+      targetClass.value = $("enrollClass").value;
+      invalidate();
+      dialog.showModal();
+    });
+    $("closeStudentImport").addEventListener("click", () => { if (!busy) dialog.close(); });
+    dialog.addEventListener("cancel", (event) => { if (busy) event.preventDefault(); });
+    input.addEventListener("change", invalidate);
+    targetClass.addEventListener("change", invalidate);
+    $("studentImportForm").addEventListener("submit", (event) => { event.preventDefault(); upload(true); });
+    confirmButton.addEventListener("click", () => upload(false));
+    dialog.querySelectorAll("[data-student-template]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        try {
+          const format = button.dataset.studentTemplate;
+          const response = await fetch(`/students/import-template?format=${format}`, {
+            headers: { Authorization: `Bearer ${account.access_token}` },
+          });
+          if (!response.ok) throw new Error("Không tải được file mẫu. Hãy kiểm tra phiên đăng nhập.");
+          const url = URL.createObjectURL(await response.blob());
+          const link = document.createElement("a");
+          link.href = url; link.download = `mau-sinh-vien.${format}`; link.click();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) { showError(error.message); }
+      });
+    });
   }
 
   let faceStudents = [],

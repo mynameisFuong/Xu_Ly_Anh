@@ -184,6 +184,13 @@ X-Camera-Token: change-me-camera-token
 còn tài khoản demo cũ, tải lại trang và đăng nhập lại một lần.
 Xem [nâng cấp độ tin cậy và đánh giá nhiều người](docs/ATTENDANCE_RELIABILITY.md).
 
+## Nhập danh sách sinh viên
+
+Trang **Sinh viên → Nhập CSV / Excel** cho phép tải file mẫu, xem trước và thêm
+danh sách từ `.csv` hoặc `.xlsx`. Cần MSSV và họ tên; có thể chọn lớp để ghi danh
+các sinh viên mới. MSSV trùng và dòng lỗi được bỏ qua, hồ sơ cũ được giữ nguyên.
+Giới hạn 5 MB / 2.000 sinh viên. Thiếu trạng thái đồng ý sẽ là Chờ đồng ý.
+
 ## Thu Nghiem
 
 ```powershell

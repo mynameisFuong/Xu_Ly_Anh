@@ -1141,3 +1141,14 @@ tbody tr:hover {
 }
 /* Hướng dẫn nhận diện; thành công chỉ hiển thị sau khi server lưu điểm danh. */
 .scan-feedback { margin-top: 14px; padding: 14px 16px; border: 1px solid #bdd6ef; border-radius: 12px; background: #f0f7ff; line-height: 1.5; }
+.student-import-dialog { width: min(960px, calc(100vw - 32px)); max-height: 90vh; overflow-y: auto; }
+.student-import-dialog h2 { margin-top: 6px; }
+.student-import-dialog .card-head { align-items: flex-start; gap: 16px; }
+.import-templates { margin-bottom: 14px; }
+.import-summary { font-weight: 700; margin: 22px 0 6px; }
+.import-preview { max-height: 360px; margin-top: 14px; border: 1px solid var(--line); border-radius: 10px; }
+.import-preview thead th { position: sticky; top: 0; z-index: 1; background: #f5f9f8; }
+.import-preview td { vertical-align: top; white-space: normal; }
+.import-preview td:last-child { min-width: 200px; }
+.import-preview .import-error { color: #ad3333; }
+.import-preview .import-success { color: #087f75; }

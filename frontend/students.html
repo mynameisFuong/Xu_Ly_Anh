@@ -21,6 +21,7 @@
               </p>
             </div>
             <div class="head-actions">
+              <button id="openStudentImport" class="btn secondary">Nhập CSV / Excel</button>
               <button id="newStudent" class="btn">+ Thêm sinh viên</button>
             </div>
           </div>
@@ -138,6 +139,51 @@
             </aside>
           </div>
         </div>
+        <dialog id="studentImportDialog" class="manual-dialog student-import-dialog" aria-labelledby="studentImportTitle">
+          <div class="card-head">
+            <div>
+              <span class="eyebrow">Nhập danh sách</span>
+              <h2 id="studentImportTitle">Thêm sinh viên từ CSV / Excel</h2>
+              <p>Tải file mẫu, điền danh sách rồi kiểm tra dữ liệu trước khi nhập.</p>
+            </div>
+            <button id="closeStudentImport" class="btn secondary small" type="button" aria-label="Đóng cửa sổ nhập danh sách">Đóng</button>
+          </div>
+          <div class="actions import-templates">
+            <button class="btn secondary small" type="button" data-student-template="csv">Tải mẫu CSV</button>
+            <button class="btn secondary small" type="button" data-student-template="xlsx">Tải mẫu Excel</button>
+          </div>
+          <p class="hint">Bắt buộc: <strong>MSSV, Họ và tên</strong>. Có thể thêm Lớp hành chính và Trạng thái đồng ý. Giữ MSSV dạng văn bản để không mất số 0 ở đầu.</p>
+          <form id="studentImportForm">
+            <div class="field-row">
+              <div class="field">
+                <label for="studentImportFile">File danh sách *</label>
+                <input id="studentImportFile" type="file" accept=".csv,.xlsx" required />
+                <small class="hint">CSV UTF-8 hoặc Excel .xlsx, tối đa 5 MB và 2.000 sinh viên. Excel đọc sheet đầu tiên.</small>
+              </div>
+              <div class="field">
+                <label for="studentImportClass">Ghi danh sinh viên mới vào lớp học</label>
+                <select id="studentImportClass"><option value="">Chỉ thêm hồ sơ, chưa ghi danh</option></select>
+                <small class="hint">Không bắt buộc. Lớp hành chính trong file không tự tạo ghi danh.</small>
+              </div>
+            </div>
+            <p class="hint">MSSV đã tồn tại sẽ được bỏ qua, không sửa hồ sơ hay ghi danh cũ. Thiếu trạng thái đồng ý sẽ là <strong>Chờ đồng ý</strong>.</p>
+            <div id="studentImportNotice" class="notice" hidden role="alert"></div>
+            <div class="actions">
+              <button id="previewStudentImport" class="btn secondary" type="submit">Xem trước dữ liệu</button>
+              <button id="confirmStudentImport" class="btn" type="button" disabled>Nhập sinh viên hợp lệ</button>
+            </div>
+          </form>
+          <div id="studentImportResults" hidden aria-live="polite">
+            <p id="studentImportSummary" class="import-summary"></p>
+            <p class="hint">Chỉ thêm các dòng hợp lệ; dòng lỗi và MSSV trùng được bỏ qua.</p>
+            <div class="table-wrap import-preview">
+              <table>
+                <thead><tr><th>Dòng</th><th>MSSV / Họ tên</th><th>Lớp</th><th>Đồng ý</th><th>Kết quả</th></tr></thead>
+                <tbody id="studentImportRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </dialog>
       </main>
     </div>
     <script src="/demo/assets/app.js" defer></script>

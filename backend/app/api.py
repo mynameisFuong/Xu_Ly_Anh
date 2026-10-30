@@ -7,7 +7,7 @@ from io import BytesIO, StringIO
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
@@ -57,6 +57,7 @@ from backend.app.schemas import (
     StudentFaceSummary,
     StudentCreate,
     StudentRead,
+    StudentImportResult,
     StudentUpdate,
     UserCreate,
     UserRead,
@@ -404,6 +405,57 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)) -> Stu
 @router.get("/students", response_model=list[StudentRead], dependencies=[Depends(require_admin)])
 def list_students(db: Session = Depends(get_db)) -> list[Student]:
     return list(db.scalars(select(Student).where(Student.deleted_at.is_(None))).all())
+
+
+@router.post("/students/import", response_model=StudentImportResult)
+def import_student_file(file: UploadFile = File(...), class_id: int | None = Form(None),
+                        dry_run: str = Form("true"), expected_digest: str | None = Form(None),
+                        user: User = Depends(require_admin), db: Session = Depends(get_db)):
+    from backend.app.services.student_import import import_students, MAX_BYTES
+
+    if dry_run not in {"true", "false"}:
+        raise HTTPException(422, "dry_run phải là true hoặc false.")
+    content = file.file.read(MAX_BYTES + 1)
+    return import_students(db, filename=file.filename, content=content, actor_id=user.id,
+                           class_id=class_id, dry_run=dry_run == "true", expected_digest=expected_digest)
+
+
+@router.get("/students/import-template", dependencies=[Depends(require_admin)])
+def student_import_template(format: str = "csv") -> Response:
+    headers = ["student_code", "full_name", "class_label", "consent_status"]
+    example = ["00123456", "Nguyễn Văn An", "KTPM", "pending"]
+    if format == "csv":
+        output = StringIO(newline="")
+        writer = csv.writer(output)
+        writer.writerows([headers, example])
+        data = output.getvalue().encode("utf-8-sig")
+        media_type, extension = "text/csv; charset=utf-8", "csv"
+    elif format == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Sinh vien"
+        sheet.append(headers)
+        sheet.append(example)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="087F75")
+        for column, width in (("A", 22), ("B", 32), ("C", 22), ("D", 22)):
+            sheet.column_dimensions[column].width = width
+        sheet["A2"].number_format = "@"
+        sheet.column_dimensions["A"].number_format = "@"
+        sheet.freeze_panes = "A2"
+        output = BytesIO()
+        workbook.save(output)
+        workbook.close()
+        data = output.getvalue()
+        media_type, extension = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    else:
+        raise HTTPException(422, "Chọn định dạng csv hoặc xlsx.")
+    return Response(content=data, media_type=media_type,
+                    headers={"Content-Disposition": f'attachment; filename="mau-sinh-vien.{extension}"'})
 
 
 @router.patch("/students/{student_id}", response_model=StudentRead)

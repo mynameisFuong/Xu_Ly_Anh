@@ -19,6 +19,33 @@ lớp được cấp quyền. Admin cấp/thu hồi quyền bằng
 phiên và yêu cầu đang mở được lọc theo quyền. Worker tin cậy vẫn dùng
 `X-Camera-Token`; đây là quyền riêng dành cho worker backend, không đưa vào frontend.
 
+## Nhập danh sách sinh viên
+
+Admin tải mẫu từ `GET /students/import-template?format=csv` hoặc `format=xlsx`.
+Nhập bằng `POST /students/import`, multipart/form-data:
+
+- `file`: CSV UTF-8 (có thể BOM hoặc UTF-16 BOM, phân cách phẩy/chấm phẩy/tab)
+  hoặc Excel `.xlsx`, sheet đầu tiên. Tối đa 5 MB, 2.000 sinh viên, 100 cột.
+- `dry_run`: chuỗi `true` để xem trước (mặc định), `false` để nhập.
+- `class_id`: không bắt buộc; chỉ ghi danh những hồ sơ mới vào lớp này.
+- `expected_digest`: lấy từ response xem trước, bắt buộc khi nhập thật; gắn với
+  nội dung file và lớp đã chọn. Đổi file/lớp phải xem trước lại.
+
+Cột bắt buộc `student_code` / `MSSV` và `full_name` / `Họ và tên`.
+Cột tùy chọn `class_label` / `Lớp hành chính`, `consent_status` / `Trạng thái đồng ý`.
+Các cột khác được bỏ qua. Trạng thái là `pending`, `granted`, `revoked` hoặc
+`Chờ đồng ý`, `Đã đồng ý`, `Đã thu hồi`; thiếu thì mặc định `pending`.
+MSSV Excel nên lưu dạng Text để giữ số 0 ở đầu. Công thức trong các cột nhập
+được báo lỗi, không lấy giá trị cache; định dạng số nguyên `000000` được giữ độ dài.
+
+Response có `total`, `valid`, `imported`, `skipped`, `failed`, `digest`, `dry_run`
+và `rows`. Mỗi row chứa số dòng, dữ liệu đã chuẩn hóa, `status` và `message`.
+Status: `valid` (xem trước), `imported`, `duplicate`, `error`.
+Các dòng lỗi và MSSV trùng được bỏ qua; không cập nhật hồ sơ/consent/Face ID hay
+ghi danh cũ, không khôi phục MSSV đã xóa mềm. Xem trước không ghi DB.
+Lượt nhập thật commit các dòng hợp lệ cùng ghi danh và audit trong một transaction;
+xung đột ghi đồng thời trả 409 và rollback toàn lượt để xem trước lại.
+
 ## Trạng thái pipeline
 
 GET /face-analysis/status dành cho tài khoản có quyền.
