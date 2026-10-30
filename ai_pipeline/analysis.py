@@ -62,9 +62,10 @@ class FaceAnalysis:
     def shadow_options(self):
         options = self.preprocessing
         if options.mode == "shadow":
-            return replace(options, version="v2") if options.shadow_v2 else options
+            return (replace(options, version=options.shadow_candidate_version)
+                    if options.version == "v1" and options.shadow_v2 else options)
         if options.mode == "enforce" and options.version == "v1" and options.shadow_v2:
-            return replace(options, version="v2")
+            return replace(options, version=options.shadow_candidate_version)
         return None
 
     def analyze(self, frame: np.ndarray, *, num_jitters: int = 1) -> EmbeddingResult:
@@ -130,6 +131,17 @@ class FaceAnalysis:
         boxes = self.recognizer.detect_faces(prepared.image)
         attempts = 1
         rescue = getattr(self.recognizer, "detect_rescue_faces", self.recognizer.detect_faces)
+        if (options.version == "v3" and not boxes and attempts < options.max_detection_attempts
+                and float(prepared.image.mean()) < 90):
+            started = perf_counter()
+            gamma_lut = np.rint(255 * (np.arange(256, dtype=np.float64) / 255) ** options.gamma_min).astype(np.uint8)
+            detection_only = cv2.LUT(prepared.image, gamma_lut)
+            elapsed += (perf_counter() - started) * 1000
+            boxes = rescue(detection_only)
+            attempts += 1
+            if boxes:
+                return PreparedFrame(prepared.image, prepared.source_to_image,
+                                     prepared.operations + ("detect-gamma",)), boxes, attempts, elapsed
         rotations = [("rotation", angle) for angle in (90, 180, 270)] if options.search_rotations else []
         rolls = [("roll", angle) for angle in (20, -20, 40, -40)
                  if options.version == "v1" or abs(angle) <= options.max_roll_degrees] if options.search_rolls else []
@@ -189,7 +201,7 @@ class FaceAnalysis:
         return results
 
     def _process(self, frame, options, *, num_jitters, detection=None, include_pose=True):
-        if options.version == "v2":
+        if options.version in {"v2", "v3"}:
             return self._process_v2(frame, options, num_jitters=num_jitters, detection=detection, include_pose=include_pose)
         return self._process_v1(frame, options, num_jitters=num_jitters, detection=detection, include_pose=include_pose)
 
@@ -221,7 +233,13 @@ class FaceAnalysis:
             preprocessing_ms += (perf_counter() - preprocessing_started) * 1000
             return rejected("Face is clipped" if str(exc) == "Face is clipped" else "Empty face crop")
         preprocessing_ms += (perf_counter() - preprocessing_started) * 1000
-        if not quality.accepted:
+        dark_rescue = (options.version == "v3" and options.v3_dark_rescue and not quality.accepted
+                       and quality.reason is not None and quality.reason.startswith("Image is too dark")
+                       and quality.metrics is not None and quality.metrics.brightness >= 30
+                       and quality.metrics.shadow_fraction <= 0.5
+                       and quality.metrics.contrast >= 20
+                       and quality.metrics.laplacian_variance >= 20)
+        if not quality.accepted and not dark_rescue:
             return rejected(quality.reason)
         library = self.recognizer._face_recognition
         landmarks = None
@@ -271,6 +289,17 @@ class FaceAnalysis:
             transformed = PreparedFrame(image, transformed.source_to_image, transformed.operations + operations)
         except (ValueError, cv2.error):
             warnings.append("enhancement-fallback")
+        if dark_rescue:
+            target = target_box(transformed)
+            if target is None:
+                return rejected(quality.reason)
+            tx, ty, tw, th = target
+            recovered = assess_face_quality_v2(transformed.image[ty:ty + th, tx:tx + tw],
+                                                native_min_side=min(work_box[2:]))
+            if not recovered.accepted:
+                return rejected(quality.reason)
+            warnings.append("dark-rescued")
+        quality_score = recovered.score if dark_rescue else quality.score
         preprocessing_ms += (perf_counter() - preprocessing_started) * 1000
 
         def encode(view):
@@ -297,7 +326,7 @@ class FaceAnalysis:
             embedding = encode(prepared)
         if not valid(embedding):
             return rejected("Cannot encode face")
-        return EmbeddingResult(True, np.asarray(embedding, np.float32), quality.score, pose=pose, face_box=box,
+        return EmbeddingResult(True, np.asarray(embedding, np.float32), quality_score, pose=pose, face_box=box,
                                diagnostics=AnalysisDiagnostics(operations=transformed.operations, warnings=tuple(warnings),
                                                                quality=quality.metrics, detection_attempts=attempts,
                                                                preprocessing_ms=preprocessing_ms))

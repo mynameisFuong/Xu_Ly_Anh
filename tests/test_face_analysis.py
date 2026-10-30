@@ -220,6 +220,48 @@ def test_v2_uses_source_quality_and_does_not_rescue_destroyed_images():
     assert "gamma" in pipeline.analyze((frame * 0.55).astype(np.uint8)).diagnostics.operations
 
 
+def test_v3_only_recovers_moderately_dark_detailed_faces():
+    from dataclasses import replace
+
+    pipeline, frame, _, library, _ = fixtures()
+    dark = np.rint(frame * 0.32).astype(np.uint8)
+    pipeline.preprocessing = replace(pipeline.preprocessing, version="v2")
+    assert not pipeline.analyze(dark).accepted
+    pipeline.preprocessing = replace(pipeline.preprocessing, version="v3")
+    recovered = pipeline.analyze(dark)
+    assert recovered.accepted
+    assert "dark-rescued" in recovered.diagnostics.warnings
+    assert "gamma" in recovered.diagnostics.operations
+    assert recovered.quality_score > 0
+    assert library.encoded_images[-1].mean() > cv2.cvtColor(dark, cv2.COLOR_BGR2RGB).mean()
+    for destroyed in (np.zeros_like(frame), np.full_like(frame, 255)):
+        assert not pipeline.analyze(destroyed).accepted
+
+
+def test_v3_uses_brightened_pixels_for_detection_but_native_pixels_for_quality():
+    from dataclasses import replace
+
+    pipeline, frame, _, _, _ = fixtures()
+    dark = np.rint(frame * 0.32).astype(np.uint8)
+    pipeline.preprocessing = replace(pipeline.preprocessing, version="v3", search_rotations=False,
+                                     search_rolls=False)
+    pipeline.recognizer.detect_faces = lambda _image: []
+    detection_means = []
+
+    def rescue(image):
+        detection_means.append(float(image.mean()))
+        return [(40, 40, 100, 100)] if image.mean() > 70 else []
+
+    pipeline.recognizer.detect_rescue_faces = rescue
+    result = pipeline.analyze(dark)
+    assert result.accepted
+    assert result.diagnostics.detection_attempts == 2
+    assert "detect-gamma" in result.diagnostics.operations
+    assert "dark-rescued" in result.diagnostics.warnings
+    assert detection_means[0] > dark.mean()
+    assert result.diagnostics.quality.brightness < 45
+
+
 def test_v2_search_budget_bounds_missing_face_cost():
     from dataclasses import replace
 
@@ -282,5 +324,31 @@ def test_only_active_shadow_candidate_is_reported():
     assert pipeline.shadow_options() is None
     pipeline.preprocessing = replace(pipeline.preprocessing, mode="shadow", shadow_v2=False)
     assert pipeline.shadow_options().version == "v2"
+    pipeline.preprocessing = replace(pipeline.preprocessing, version="v3", mode="shadow", shadow_v2=True)
+    assert pipeline.shadow_options().version == "v3"
     pipeline.preprocessing = replace(pipeline.preprocessing, version="v1", mode="enforce", shadow_v2=True)
     assert pipeline.shadow_options().version == "v2"
+    pipeline.preprocessing = replace(pipeline.preprocessing, shadow_candidate_version="v3")
+    assert pipeline.shadow_options().version == "v3"
+
+
+def test_enforced_v1_can_measure_v3_without_changing_the_returned_embedding(monkeypatch):
+    from dataclasses import replace
+
+    pipeline, frame, _, _, _ = fixtures()
+    pipeline.preprocessing = replace(pipeline.preprocessing, version="v1", shadow_v2=False)
+    baseline = pipeline.analyze(frame)
+    pipeline.preprocessing = replace(pipeline.preprocessing, shadow_v2=True,
+                                     shadow_candidate_version="v3", shadow_sample_rate=1)
+    pipeline._shadow_credit = 0
+    monkeypatch.setattr(pipeline, "_process_v2", lambda *_args, **_kwargs:
+                        EmbeddingResult(True, np.full(128, 2, np.float32)))
+    result = pipeline.analyze(frame)
+    np.testing.assert_array_equal(result.embedding, baseline.embedding)
+    assert result.diagnostics.shadow_embedding_distance is not None
+    baseline_version = FaceRecognizer(preprocessing=PreprocessingOptions(mode="enforce", version="v1",
+                                                                          shadow_v2=False)).model_version
+    candidate_version = FaceRecognizer(preprocessing=PreprocessingOptions(mode="enforce", version="v1",
+                                                                           shadow_v2=True,
+                                                                           shadow_candidate_version="v3")).model_version
+    assert candidate_version == baseline_version

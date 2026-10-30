@@ -1,4 +1,4 @@
-# Vận hành tiền xử lý v2 và benchmark recognition
+# Vận hành tiền xử lý v2/v3 và benchmark recognition
 
 ## Đã triển khai
 
@@ -17,45 +17,73 @@
   cấu hình độc lập, không lưu ảnh/embedding trong report và không thay DB.
 - [check_preprocessing_rollout.py](../scripts/check_preprocessing_rollout.py):
   thống kê số bộ năm góc tương thích, không ghi DB hay sửa môi trường.
+- [preview_preprocessing.py](../scripts/preview_preprocessing.py): xuất ảnh nguồn,
+  ảnh sau hình học, ảnh sau tăng cường và ảnh chẩn đoán Kirsch/Retinex/Tan–Triggs
+  để quan sát. Không ghi điểm danh hoặc thay ảnh đầu vào của dlib bằng ảnh biên.
+
+V3 là profile hiện hành kế thừa v2: giữ nguyên ảnh tốt, làm mềm đường biên ROI
+khi có xử lý sáng/nhiễu, chỉ thử cứu ảnh tối vừa phải (độ sáng nguồn ≥30, đủ
+tương phản/độ nét) và kiểm tra lại sau xử lý. Trong luồng nhiều mặt, v3 thử thêm
+tối đa hai hướng roll ngay cả khi đã thấy mặt khác; gộp các khung về tọa độ
+ảnh gốc trước khi nhận diện. Với ảnh tối không thấy mặt, v3 thử thêm một lần
+gamma chỉ cho detector; ảnh đưa vào model vẫn qua kiểm tra trên nguồn gốc.
+Chi phí detector và khả năng gộp nhầm cần đo bằng
+camera thực. Cấu hình mặc định hiện tại là `enforce`/v3; vector v1/v2 không
+được dùng trong gallery v3.
 
 V2 mặc định không căn mắt ngoài vì [dlib tự tạo chip 150×150 có padding](https://github.com/davisking/dlib/blob/master/tools/python/src/face_recognition.cpp).
 [CLAHE](https://docs.opencv.org/4.x/d5/daf/tutorial_py_histogram_equalization.html)
 chỉ là một nhánh tăng tương phản; không giả định nó luôn cải thiện ResNet.
 
-## Cấu hình triển khai an toàn
+## Cấu hình hiện hành và chế độ đối chiếu
 
-Giữ các khóa cũ trong `.env`; không thay `PREPROCESSING_VERSION` sang v2 khi
-chưa có đủ năm mẫu v2. Cấu hình mặc định bổ sung:
+Trên máy mới, `.env.example` chọn v3 cho cả đăng ký và điểm danh:
 
 ```dotenv
-PREPROCESSING_VERSION=v1
-PREPROCESSING_SHADOW_V2=true
-PREPROCESSING_SHADOW_SAMPLE_RATE=0.1
+PREPROCESSING_MODE=enforce
+PREPROCESSING_VERSION=v3
+PREPROCESSING_SHADOW_V2=false
 PREPROCESSING_V2_ALIGN_EYES=false
 PREPROCESSING_LIGHTING_METHOD=adaptive
 PREPROCESSING_DENOISE_METHOD=off
 PREPROCESSING_MAX_DETECTION_ATTEMPTS=8
 ```
 
-Khi mode đang là `enforce`, v1 quyết định điểm danh, còn v2 được chạy trên
-10% lượt để đo khoảng cách embedding và latency tổng hợp. Khi mode là `off`,
-không chạy v2. Mode `shadow` giữ legacy chưa tiền xử lý làm đối chứng.
-Đối chiếu chạy đồng bộ và có tăng latency ở lượt được chọn; giảm sample rate
-hoặc đặt 0 nếu camera không đủ CPU. Status ở `/face-analysis/status` có
-profile hiện tại/candidate, số lần chấp nhận/từ chối và p50/p95.
+Khi cần thí nghiệm đối chiếu v1, có thể chọn `PREPROCESSING_VERSION=v1`, bật
+`PREPROCESSING_SHADOW_V2=true` và đặt
+`PREPROCESSING_SHADOW_CANDIDATE_VERSION=v3`. Khi ấy v1 quyết định điểm danh,
+v3 chỉ được đo trên mẫu frame theo `PREPROCESSING_SHADOW_SAMPLE_RATE`; cần mẫu
+đăng ký v1 tương ứng. Đối chiếu chạy đồng bộ và tăng latency. Mode `shadow`
+giữ đường legacy chưa tiền xử lý làm đối chứng. Status ở
+`/face-analysis/status` có profile hiện tại/candidate và thống kê tổng hợp.
 
-Khởi động lại backend để đọc các giá trị mặc định mới:
+Khởi động lại backend để đọc cấu hình mới:
 
 ```powershell
 .\.venv313\Scripts\python.exe scripts/run_web.py --reload
-.\.venv313\Scripts\python.exe scripts/check_preprocessing_rollout.py --version v2
+.\.venv313\Scripts\python.exe scripts/check_preprocessing_rollout.py --version v3
 ```
 
-Ngày 30/10/2026, inventory local có 1 bộ v1 đủ năm góc, 0 bộ v2. Vì vậy bản
-nâng cấp giữ v1 đang hoạt động. Không sửa ngầm model_version của vector cũ,
-không dùng ảnh chân dung 400×600 đã crop như ảnh nguồn tương đương.
+Ngày 31/10/2026, cơ sở dữ liệu thử local được chuyển sang v3: hai bộ năm góc
+được tính lại từ ảnh chân dung 400×600 còn lưu, không đổi nhãn vector v1. Ảnh
+đã cắt không tương đương frame gốc; đây chỉ là dữ liệu demo và nên đăng ký lại
+từ camera nếu cần đánh giá độ chính xác thực tế. Cơ sở dữ liệu và ảnh này không
+được đưa vào Git; máy mới chạy seed chỉ có metadata và phải đăng ký khuôn mặt.
 
 ## Dữ liệu benchmark
+
+Xem trực tiếp một ảnh được phép sử dụng (đầu ra là ảnh khuôn mặt, nên lưu trong
+`storage/` và không đưa lên Git):
+
+```powershell
+.\.venv313\Scripts\python.exe scripts/preview_preprocessing.py storage/recognition-benchmark/images/example.jpg storage/recognition-benchmark/preview --version v3 --lighting adaptive --denoise adaptive
+```
+
+Thêm `--align-eyes` để khảo sát căn mắt ngoài; cần cài dlib và landmark tin cậy.
+Ảnh xem trước là một nhánh minh họa, không phải quyết định nhận diện. File
+`metadata.json` ghi chất lượng ảnh nguồn, phép đã áp dụng và cấu hình; Retinex,
+Tan–Triggs, Kirsch chỉ là ảnh thí nghiệm. Muốn kết luận có ích cho model phải
+chạy benchmark với dữ liệu và ngưỡng cố định.
 
 Dùng ảnh có quyền sử dụng, khoảng 30 người và ít nhất ba phiên/camera thực.
 Tạo `storage/recognition-benchmark/manifest.json`; đường dẫn ảnh tính tương đối
@@ -83,8 +111,8 @@ Tool không thể tự xác minh hai mã người/phiên khác nhau có đúng t
 ## Chạy ablation
 
 ```powershell
-.\.venv313\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition validation --profiles legacy v1 v2-geometry v2-gamma v2-clahe v2-adaptive v2-denoise v2-align --output storage/recognition-benchmark/validation.json
-.\.venv313\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition test --profiles legacy v1 v2-geometry v2-gamma v2-clahe v2-adaptive v2-denoise v2-align --calibration storage/recognition-benchmark/validation.json --output storage/recognition-benchmark/test.json
+.\.venv313\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition validation --profiles legacy v1 v2-geometry v2-adaptive v2-denoise v2-align v3-geometry v3-adaptive v3-denoise v3-align --output storage/recognition-benchmark/validation.json
+.\.venv313\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition test --profiles legacy v1 v2-geometry v2-adaptive v2-denoise v2-align v3-geometry v3-adaptive v3-denoise v3-align --calibration storage/recognition-benchmark/validation.json --output storage/recognition-benchmark/test.json
 ```
 
 Giữ cố định threshold/margin; mặc định 0,52/0,04. Khi benchmark cấu hình khác,
@@ -93,10 +121,10 @@ cùng manifest+nội dung ảnh, target FAR và profile; không tự chọn cuto
 Có thể chạy riêng `--profiles retinex tan-triggs` cho thí nghiệm P3. Những nhánh
 này giữ quality gate trên ảnh nguồn, chỉ đổi xử lý ROI sau kiểm tra.
 
-`--stress` tạo thêm probe xoay 90/180/270, roll ±20, tối, tương phản thấp, nhiễu,
-JPEG; ảnh enroll không bị thay đổi, mọi biến thể ở cùng partition/session.
-Chỉ coi đây là kiểm tra kỹ thuật. Các phép mirror có cấu hình và roll ±10/±30
-cần đưa vào bộ camera/thí nghiệm riêng; không suy luận mirror từ mắt.
+`--stress` tạo thêm probe xoay 90/180/270, roll ±10/±20/±30, lật gương, tối,
+ánh sáng lệch bên, tương phản thấp, nhiễu, mờ và JPEG; ảnh enroll không bị
+thay đổi, mọi biến thể ở cùng partition/session. Chỉ coi đây là kiểm tra kỹ
+thuật; phải kiểm tra bằng camera thật. Không suy luận mirror từ mắt.
 `--max-side 640` đưa cùng một resize về cạnh dài tối đa 640 px vào trước mọi
 profile để mô phỏng kích thước webcam; mặc định 0 giữ độ phân giải gốc.
 Report ghi rõ giá trị này và calibration/test phải dùng giống nhau. Thời gian
@@ -160,3 +188,20 @@ chỉ được bật thêm sau benchmark thực; hiện giữ xác nhận bằng
   embedding v1 128 chiều được trả về giống hệt embedding v1 không shadow;
   nhánh v2 cũng trích xuất thành công. Điều này kiểm tra hợp đồng trên ảnh thử,
   không chứng minh các profile có thể dùng chung template.
+
+## Kiểm tra kỹ thuật v3 ngày 31/10/2026
+
+Chạy benchmark trên tập ảnh ví dụ công khai local gồm một người đăng ký, bốn
+probe cùng người (ba biến thể tổng hợp) và một probe người lạ, cùng cạnh dài
+640 px. `legacy` nhận đúng 3/4; `v1`, `v2-adaptive` và bốn profile v3 thử đều
+nhận đúng 4/4; người lạ không bị nhận nhầm trong mẫu này. P95 tổng ở lần chạy
+đơn lẻ là khoảng 1,39 giây cho `v2-adaptive`, 1,91 giây cho `v3-adaptive` và
+2,16 giây cho `v3-denoise`; phần tiền xử lý được đo lần lượt khoảng 6,5, 8,2
+và 10,3 ms. Bảng đầy đủ nằm local tại `storage/preprocessing-smoke/v3-comparison.json`.
+Những số ít mẫu này **không** đủ để tuyên bố v3 tốt hơn hoặc kém hơn về độ
+chính xác/tốc độ; có thể bị ảnh hưởng bởi warmup và tải CPU. V3 hiện đã được
+bật để demo, còn lợi ích thực tế cần đo thêm trên camera và người tham gia.
+Một kiểm tra riêng trên ảnh ví dụ đó giảm cường độ pixel xuống 30%: v2 từ chối
+vì độ sáng mặt 43,6, v3 chấp nhận sau gamma và biên ROI; hai embedding v3 từ
+ảnh gốc và ảnh tối cách nhau 0,215 theo Euclidean. Đây là một ảnh và một biến
+thể tổng hợp, không chứng minh độ chính xác trên ảnh chụp thiếu sáng thật.

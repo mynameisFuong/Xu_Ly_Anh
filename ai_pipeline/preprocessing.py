@@ -28,11 +28,18 @@ class PreprocessingOptions:
     clahe_clip_limit: float = 1.5
     max_detection_attempts: int = 8
     shadow_v2: bool = False
+    shadow_candidate_version: str = "v2"
     shadow_sample_rate: float = 1.0
+    v3_feather_roi: bool = True
+    v3_dark_rescue: bool = True
+    v3_multi_face_rescue: bool = True
+    v3_extra_detection_attempts: int = 2
 
     def __post_init__(self):
-        if self.mode not in {"off", "shadow", "enforce"} or self.version not in {"v1", "v2"}:
+        if self.mode not in {"off", "shadow", "enforce"} or self.version not in {"v1", "v2", "v3"}:
             raise ValueError("Invalid preprocessing mode or version")
+        if self.shadow_candidate_version not in {"v2", "v3"}:
+            raise ValueError("Invalid shadow candidate version")
         if self.lighting_method not in {"none", "adaptive", "gamma", "clahe"}:
             raise ValueError("Unsupported lighting method")
         if self.denoise_method not in {"off", "adaptive", "median", "bilateral"}:
@@ -45,6 +52,8 @@ class PreprocessingOptions:
             raise ValueError("Unsafe roll or detection search limit")
         if not 0 <= self.shadow_sample_rate <= 1:
             raise ValueError("Shadow sample rate must lie in [0, 1]")
+        if not 0 <= self.v3_extra_detection_attempts <= 4:
+            raise ValueError("Extra detection attempts must lie in [0, 4]")
 
     @property
     def profile(self) -> str:
@@ -52,9 +61,12 @@ class PreprocessingOptions:
         legacy = ("align_eyes", "normalize_lighting", "search_rotations", "search_rolls",
                   "mirror_input", "max_roll_degrees")
         values = {name: getattr(self, name) for name in legacy}
-        if self.version == "v2":
+        if self.version in {"v2", "v3"}:
             values = {name: value for name, value in vars(self).items()
-                      if name not in {"mode", "shadow_v2", "shadow_sample_rate", "align_eyes"}}
+                      if name not in {"mode", "shadow_v2", "shadow_candidate_version",
+                                      "shadow_sample_rate", "align_eyes"}}
+            if self.version == "v2":
+                values = {name: value for name, value in values.items() if not name.startswith("v3_")}
         payload = json.dumps(values, sort_keys=True).encode()
         return f"pre-{self.version}-" + sha256(payload).hexdigest()[:10]
 
@@ -242,6 +254,19 @@ def enhance_face_region(image: np.ndarray, box, metrics, options: PreprocessingO
     if "gamma" in operations or "clahe-roi" in operations:
         roi = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
     output = image.copy()
+    if options.version == "v3" and options.v3_feather_roi:
+        # Smooth the artificial seam at the padded ROI boundary. The face box
+        # itself retains the full enhancement; outside the ROI stays native.
+        yy, xx = np.mgrid[top:bottom, left:right]
+        fade_x = np.where(xx < x, (xx - left) / max(1, x - left),
+                          np.where(xx >= x + w, (right - 1 - xx) / max(1, right - x - w), 1))
+        fade_y = np.where(yy < y, (yy - top) / max(1, y - top),
+                          np.where(yy >= y + h, (bottom - 1 - yy) / max(1, bottom - y - h), 1))
+        alpha = np.minimum(fade_x, fade_y)
+        alpha = np.clip(alpha, 0, 1).astype(np.float32)[..., None]
+        native = image[top:bottom, left:right].astype(np.float32)
+        roi = np.rint(native * (1 - alpha) + roi.astype(np.float32) * alpha).astype(np.uint8)
+        operations.append("feather-roi")
     output[top:bottom, left:right] = roi
     return np.ascontiguousarray(output), tuple(operations)
 

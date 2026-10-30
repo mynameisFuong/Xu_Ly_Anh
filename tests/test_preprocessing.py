@@ -107,6 +107,34 @@ def test_adaptive_lighting_keeps_good_images_exact_and_does_not_touch_background
     assert output.shape == frame.shape and output.dtype == np.uint8
 
 
+def test_v3_feather_preserves_face_and_native_background_without_roi_seam():
+    from ai_pipeline.quality import measure_face_quality
+
+    frame = np.full((180, 220, 3), 65, np.uint8)
+    frame[50:130, 70:150] = 75
+    metrics = measure_face_quality(frame[50:130, 70:150])
+    options = PreprocessingOptions(version="v3", lighting_method="gamma")
+    output, operations = enhance_face_region(frame, (70, 50, 80, 80), metrics, options)
+    assert "feather-roi" in operations
+    assert output[90, 110, 0] > frame[90, 110, 0]
+    np.testing.assert_array_equal(output[0, 0], frame[0, 0])
+    # At the padded ROI edge the blend joins the untouched source exactly.
+    np.testing.assert_array_equal(output[30, 50], frame[30, 50])
+    np.testing.assert_array_equal(frame[90, 110], [75, 75, 75])
+
+
+def test_v3_options_do_not_change_existing_profile_ids():
+    from dataclasses import replace
+
+    legacy_v2 = PreprocessingOptions(version="v2").profile
+    assert legacy_v2 == "pre-v2-98d7eb378b"
+    changed = replace(PreprocessingOptions(version="v2"), v3_feather_roi=False,
+                      v3_dark_rescue=False, v3_multi_face_rescue=False, shadow_candidate_version="v3")
+    assert changed.profile == legacy_v2
+    assert PreprocessingOptions(version="v3").profile != legacy_v2
+    assert replace(PreprocessingOptions(version="v3"), v3_feather_roi=False).profile != PreprocessingOptions(version="v3").profile
+
+
 def test_adaptive_denoising_removes_impulses_and_clean_image_is_unchanged():
     from dataclasses import replace
     from ai_pipeline.quality import measure_face_quality
@@ -164,6 +192,20 @@ def test_experimental_algorithms_preserve_bgr_contract_and_handle_constant_image
             assert result.dtype == np.uint8 and result.shape == pixels.shape
             assert np.isfinite(result).all()
             np.testing.assert_array_equal(pixels, original)
+
+
+def test_preview_exports_real_color_image_stages_and_separate_edge_diagnostic():
+    from scripts.preview_preprocessing import render_previews
+
+    frame = np.random.default_rng(21).integers(45, 135, (180, 200, 3), np.uint8)
+    original = frame.copy()
+    stages, metadata = render_previews(frame, (40, 30, 100, 110), PreprocessingOptions(version="v3"))
+    assert stages["01-source-bgr.png"].shape == frame.shape
+    assert stages["03-enhanced-bgr.png"].shape == frame.shape
+    assert stages["04-kirsch-diagnostic.png"].ndim == 2
+    assert stages["05-retinex-experiment.png"].shape == (110, 100, 3)
+    assert metadata["face_box_source_xywh"] == [40, 30, 100, 110]
+    np.testing.assert_array_equal(frame, original)
 
 
 def test_decoder_applies_exif_orientation_once_without_a_second_pipeline_rotation():

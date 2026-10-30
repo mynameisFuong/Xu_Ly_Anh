@@ -2,10 +2,10 @@
 
 Ngày lập: 30/10/2026. Phạm vi: xử lý ảnh cổ điển có cơ sở học thuật,
 giữ engine nhận diện dlib ResNet 128D và cơ chế điểm danh hiện có.
-Kế hoạch đã được duyệt triển khai. Các nhánh pre-v2 và công cụ đánh giá đã được
-cài đặt; `.env.example` hiện mặc định preprocessing off. Khi enforce v1 có thể
-lấy mẫu đối chiếu v2; không tự chuyển template cũ sang v2.
-Chưa có đủ dữ liệu camera để khẳng định mức cải thiện accuracy hoặc chuyển toàn bộ.
+Kế hoạch đã được duyệt triển khai. Các nhánh v2/v3 và công cụ đánh giá đã được
+cài đặt; `.env.example` hiện mặc định v3 enforce. Khi cần thí nghiệm, v1 có thể
+lấy mẫu đối chiếu v2/v3. Vector khác profile không được ghép chung.
+Chưa có đủ dữ liệu camera để khẳng định mức cải thiện accuracy.
 
 ## Trạng thái sau triển khai
 
@@ -18,7 +18,7 @@ Chưa có đủ dữ liệu camera để khẳng định mức cải thiện acc
 | P2: chọn frame/cache camera riêng | Đã có tracker theo geometry, chuyển động và embedding; xác nhận danh tính vẫn cần so khớp frame mới. Cần đo camera thực. |
 | P3: Retinex/Tan–Triggs | Đã cài đặt ở nhánh benchmark độc lập; không có công tắc production. |
 | P3: hiệu chuẩn/undistort | Chưa áp dụng: chưa có intrinsics đo của camera. Không tự tạo tham số giả định. |
-| Chuyển bộ mẫu | Có CLI kiểm tra chỉ đọc. Inventory từng máy thay đổi theo dữ liệu; không tự sửa/đổi nhãn mẫu cũ. |
+| Chuyển bộ mẫu | Dữ liệu thử local đã được trích xuất lại bằng v3 từ ảnh chân dung còn lưu; vector v1 đã xóa. Máy khác không có ảnh nên cần đăng ký từ camera. CLI inventory vẫn chỉ đọc. |
 
 Chi tiết lệnh chạy, cấu trúc dữ liệu và rollback:
 [PREPROCESSING_BENCHMARK.md](PREPROCESSING_BENCHMARK.md).

@@ -113,11 +113,22 @@ lượng kiểm tra kích thước tối thiểu 80 px, độ sáng và phương
 thêm tương phản, vùng tối/cháy, gradient và chỉ số nhiễu. Các ngưỡng là heuristic,
 cần thử trên camera đích. Xem [quality.py](../ai_pipeline/quality.py).
 
-`PREPROCESSING_MODE=off` là mặc định trong `.env.example`: giữ luồng legacy.
+`PREPROCESSING_MODE=enforce` và `PREPROCESSING_VERSION=v3` là mặc định trong
+`.env.example`; đăng ký và nhận diện dùng cùng profile v3.
 `shadow` đo nhánh ứng viên mà không thay quyết định; `enforce` dùng profile cấu
 hình. V1 có thể tìm xoay/roll, căn mắt và CLAHE. V2 có thể chọn gamma/CLAHE theo
 ROI, xử lý nhiễu tùy chọn và có giới hạn số lần thử detector; mặc định không căn
 mắt ngoài và không lọc nhiễu. Với v1 enforce, shadow v2 có thể lấy mẫu 10% frame.
+Có thể chọn v3 làm nhánh lấy mẫu đối chiếu mà không đổi quyết định v1 bằng
+`PREPROCESSING_SHADOW_CANDIDATE_VERSION=v3`.
+Cấu hình v3 kế thừa v2 và bổ sung biên chuyển tiếp cho ROI, cứu ảnh
+tối vừa phải nếu ảnh nguồn vẫn đủ chi tiết và ảnh sau gamma qua lại kiểm tra
+chất lượng. Khi detector ban đầu bỏ sót ảnh tối, v3 có một lần tăng sáng chỉ để
+tìm vị trí mặt; ảnh tăng sáng này không được dùng làm bằng chứng chất lượng hay
+đầu vào trực tiếp cho model. V3 cũng có tối đa hai lần tìm thêm mặt nghiêng khi quét nhiều người. Các
+khung phát hiện từ góc khác nhau được quy về tọa độ gốc và gộp trùng; phép tìm
+thêm làm tăng độ trễ; vì vậy cần kiểm tra hiệu năng trên camera đích. V3
+dùng mã profile khác v1/v2; chỉ mẫu cùng profile mới được dùng để điểm danh.
 Các phép này không dựng phần mặt bị che, và chưa có bằng chứng mọi cấu hình đều
 cải thiện nhận diện. Trọng số ResNet không được huấn luyện lại trong repository.
 

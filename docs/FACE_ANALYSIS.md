@@ -2,8 +2,9 @@
 
 Liveness/PAD đã được gỡ khỏi hệ thống theo yêu cầu ngày 30/10/2026.
 Điểm danh web/desktop gửi ảnh trực tiếp để nhận diện, không còn thử thách quay đầu
-hoặc yêu cầu model chống giả mạo. Kế hoạch nâng cấp thuật toán mới nằm trong
-[PREPROCESSING_UPGRADE_PLAN.md](PREPROCESSING_UPGRADE_PLAN.md).
+hoặc yêu cầu model chống giả mạo. Lịch sử kế hoạch nâng cấp nằm trong
+[PREPROCESSING_UPGRADE_PLAN.md](PREPROCESSING_UPGRADE_PLAN.md); cấu hình và
+thực nghiệm hiện tại ở [PREPROCESSING_BENCHMARK.md](PREPROCESSING_BENCHMARK.md).
 
 ## Pipeline hiện tại
 
@@ -34,13 +35,21 @@ xử lý mỗi khuôn mặt độc lập, không để một ảnh mờ chặn n
   chọn gamma HOẶC CLAHE theo độ sáng/tương phản của mặt, giữ ảnh tốt nguyên trạng.
   PREPROCESSING_V2_ALIGN_EYES=true chỉ để đo ablation căn roll ngoài; các ma trận
   được hợp nhất để render lại từ pixel nguồn thay vì nội suy nhiều lần.
+- PREPROCESSING_VERSION=v3 là cấu hình mặc định hiện hành; bổ sung biên chuyển tiếp ROI, cứu ảnh tối
+  vừa phải bằng gamma có kiểm tra lại, một phép tăng sáng chỉ cho detector khi
+  ảnh tối không tìm được mặt, và thêm tối đa hai lần tìm mặt nghiêng trong stream
+  nhiều người. Profile riêng yêu cầu mẫu đăng ký phù hợp; không tái sử dụng vector v1/v2.
+  `PREPROCESSING_V3_*` điều khiển các nhánh đó. Mode shadow với v3 đo v3 nhưng
+  vẫn trả kết quả legacy; v1 enforce có thể đối chiếu v2 hoặc v3.
 - PREPROCESSING_DENOISE_METHOD=off mặc định. `adaptive` chọn median 3×3 theo
   tỷ lệ nhiễu xung hoặc bilateral nhỏ theo MAD high-pass ở vùng ít gradient.
   Các ước lượng này là heuristic có thể nhầm texture; chỉ bật khi benchmark có lợi.
-- PREPROCESSING_MAX_DETECTION_ATTEMPTS=8 giới hạn số lần gọi detector ở v2,
+- PREPROCESSING_MAX_DETECTION_ATTEMPTS=8 giới hạn số lần gọi detector ở v2/v3,
   gồm hướng gốc, 90/180/270 và roll ±20/±40 trong giới hạn cấu hình.
 - PREPROCESSING_SHADOW_V2=true và PREPROCESSING_SHADOW_SAMPLE_RATE=0.1 chạy
-  đối chiếu v2 trên 10% lượt v1 enforce; giữ embedding, pose, box và quyết định v1.
+  đối chiếu v2 trên 10% lượt v1 enforce; đặt
+  PREPROCESSING_SHADOW_CANDIDATE_VERSION=v3 để đo v3 thay v2 mà vẫn giữ
+  embedding, pose, box và quyết định v1.
   Chế độ shadow thường giữ legacy chưa preprocessing, còn enforce v1 + shadow_v2
   dùng v1 làm đối chứng. Đặt sample_rate=0 để tắt chi phí đối chiếu.
 
@@ -96,6 +105,6 @@ Launcher local đọc lại .env hiện tại và đặt thư mục làm việc 
 
 Nhóm browser dùng Chrome headless và webcam tổng hợp. Các unit test tọa độ,
 dtype và fallback không thay thế benchmark accuracy trên camera thật. Các
-nâng cấp v2 đã được cài đặt, có kiểm thử tọa độ, EXIF, nhánh chất lượng và fallback.
+nâng cấp v2/v3 đã được cài đặt, có kiểm thử tọa độ, EXIF, nhánh chất lượng và fallback.
 Retinex/Tan–Triggs chỉ có ở công cụ benchmark, không chọn được qua cấu hình runtime.
 Xem [PREPROCESSING_BENCHMARK.md](PREPROCESSING_BENCHMARK.md) để đo và chuyển profile.

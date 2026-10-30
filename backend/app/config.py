@@ -27,14 +27,14 @@ class Settings(BaseSettings):
     face_detection_model_path: Path = Path("storage/face-models/face_detection_yunet_2023mar.onnx")
     face_detection_score_threshold: float = Field(default=0.9, ge=0.5, lt=1)
     face_detection_max_side: int = Field(default=640, ge=320, le=1280)
-    preprocessing_mode: Literal["off", "shadow", "enforce"] = "off"
+    preprocessing_mode: Literal["off", "shadow", "enforce"] = "enforce"
     preprocessing_align_eyes: bool = True
     preprocessing_normalize_lighting: bool = True
     preprocessing_search_rotations: bool = True
     preprocessing_search_rolls: bool = True
     preprocessing_mirror_input: bool = False
     preprocessing_max_roll_degrees: float = Field(default=40, gt=0, le=60)
-    preprocessing_version: Literal["v1", "v2"] = "v1"
+    preprocessing_version: Literal["v1", "v2", "v3"] = "v3"
     preprocessing_lighting_method: Literal["none", "adaptive", "gamma", "clahe"] = "adaptive"
     preprocessing_denoise_method: Literal["off", "adaptive", "median", "bilateral"] = "off"
     preprocessing_v2_align_eyes: bool = False
@@ -43,8 +43,13 @@ class Settings(BaseSettings):
     preprocessing_gamma_max: float = Field(default=1.4, ge=1, le=2)
     preprocessing_clahe_clip_limit: float = Field(default=1.5, gt=0, le=4)
     preprocessing_max_detection_attempts: int = Field(default=8, ge=1, le=8)
-    # Sample v2 alongside an enforced v1 without changing its templates/decisions.
-    preprocessing_shadow_v2: bool = True
+    preprocessing_v3_feather_roi: bool = True
+    preprocessing_v3_dark_rescue: bool = True
+    preprocessing_v3_multi_face_rescue: bool = True
+    preprocessing_v3_extra_detection_attempts: int = Field(default=2, ge=0, le=4)
+    # Sample v2 or v3 alongside an enforced v1 without changing its templates/decisions.
+    preprocessing_shadow_v2: bool = False
+    preprocessing_shadow_candidate_version: Literal["v2", "v3"] = "v2"
     preprocessing_shadow_sample_rate: float = Field(default=0.1, ge=0, le=1)
 
     @model_validator(mode="after")

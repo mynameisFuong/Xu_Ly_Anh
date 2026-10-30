@@ -470,14 +470,16 @@ def test_camera_routes_require_camera_token(api_context):
     assert client.get("/camera/pipeline", headers={"X-Camera-Token": "invalid"}).status_code == 401
     headers = {"X-Camera-Token": "test-camera-token"}
     status = client.get("/camera/pipeline", headers=headers)
-    assert status.status_code == 200 and status.json()["preprocessing_mode"] == "off"
+    assert status.status_code == 200 and status.json()["preprocessing_mode"] == "enforce"
+    assert status.json()["preprocessing_version"] == "v3"
     body = {"image_base64": base64.b64encode(b"frame").decode()}
     assert client.post(f"/sessions/{session.id}/camera-scan-frame", json=body).status_code == 422
     assert client.get("/face-analysis/status", headers={"Authorization": ""}).status_code == 401
 
 
 def test_legacy_camera_policy_does_not_require_backend_image_dependencies(api_context, monkeypatch):
-    client, *_ = api_context
+    client, _, _, _, _, _, settings, _ = api_context
+    settings.preprocessing_mode = "off"
 
     def unavailable():
         raise AssertionError("Legacy camera policy must not load the backend recognizer")

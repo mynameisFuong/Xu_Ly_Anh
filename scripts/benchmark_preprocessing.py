@@ -83,14 +83,24 @@ def sample_bytes(sample, max_side=0):
         image = cv2.resize(image, (round(image.shape[1] * scale), round(image.shape[0] * scale)), interpolation=cv2.INTER_AREA)
     if sample.variant in {"rotate-90", "rotate-180", "rotate-270"}:
         image = orient_image(image, rotation=int(sample.variant.split("-")[1])).image
-    elif sample.variant in {"roll-20", "roll-minus20"}:
-        image = rotate_roll(orient_image(image), 20 if sample.variant == "roll-20" else -20).image
+    elif sample.variant.startswith("roll-"):
+        angle = sample.variant.removeprefix("roll-").replace("minus", "-")
+        if angle not in {"10", "-10", "20", "-20", "30", "-30"}:
+            raise ValueError("Unknown synthetic roll")
+        image = rotate_roll(orient_image(image), int(angle)).image
+    elif sample.variant == "mirror":
+        image = orient_image(image, mirror=True).image
     elif sample.variant == "dark":
         image = np.rint(image * 0.55).astype(np.uint8)
     elif sample.variant == "low-contrast":
         image = np.clip(120 + (image.astype(np.float32) - 120) * 0.4, 0, 255).astype(np.uint8)
     elif sample.variant == "noise":
         image = np.clip(image.astype(np.float32) + np.random.default_rng(42).normal(0, 5, image.shape), 0, 255).astype(np.uint8)
+    elif sample.variant == "side-light":
+        scale = np.linspace(0.35, 1.0, image.shape[1], dtype=np.float32)[None, :, None]
+        image = np.rint(image.astype(np.float32) * scale).astype(np.uint8)
+    elif sample.variant == "blur":
+        image = cv2.GaussianBlur(image, (7, 7), 1.5)
     elif sample.variant not in {"jpeg", "original"}:
         raise ValueError("Unknown synthetic variant")
     ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, 35 if sample.variant == "jpeg" else 95])
@@ -110,12 +120,18 @@ def profile_options(name: str, base: PreprocessingOptions) -> PreprocessingOptio
         "v2-adaptive": dict(lighting_method="adaptive", denoise_method="off"),
         "v2-denoise": dict(lighting_method="adaptive", denoise_method="adaptive"),
         "v2-align": dict(lighting_method="none", denoise_method="off", v2_align_eyes=True),
+        "v3-geometry": dict(lighting_method="none", denoise_method="off", v3_dark_rescue=False),
+        "v3-adaptive": dict(lighting_method="adaptive", denoise_method="off"),
+        "v3-denoise": dict(lighting_method="adaptive", denoise_method="adaptive"),
+        "v3-align": dict(lighting_method="none", denoise_method="off", v2_align_eyes=True,
+                         v3_dark_rescue=False),
         "retinex": dict(lighting_method="none", denoise_method="off"),
         "tan-triggs": dict(lighting_method="none", denoise_method="off"),
     }
     if name not in variants:
         raise ValueError(f"Unknown ablation: {name}")
-    updates = dict(version="v2", normalize_lighting=True, v2_align_eyes=False)
+    updates = dict(version="v3" if name.startswith("v3-") else "v2",
+                   normalize_lighting=True, v2_align_eyes=False)
     updates.update(variants[name])
     return replace(common, **updates)
 
@@ -262,7 +278,9 @@ def main():
     if not samples or not any(s.role != "enroll" for s in samples):
         parser.error("Selected partition needs enrollment/probe or unknown samples")
     if args.stress:
-        variants = ("rotate-90", "rotate-180", "rotate-270", "roll-20", "roll-minus20", "dark", "low-contrast", "noise", "jpeg")
+        variants = ("rotate-90", "rotate-180", "rotate-270", "roll-10", "roll-minus10", "roll-20",
+                    "roll-minus20", "roll-30", "roll-minus30", "mirror", "dark", "side-light",
+                    "low-contrast", "noise", "blur", "jpeg")
         samples += [replace(sample, variant=variant, condition="synthetic-" + variant)
                     for sample in samples if sample.role != "enroll" for variant in variants]
     fingerprint = sha256(args.manifest.read_bytes())

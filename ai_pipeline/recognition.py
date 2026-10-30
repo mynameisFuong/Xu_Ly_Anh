@@ -201,7 +201,7 @@ class FaceRecognizer:
         return FrameEmbeddingResult(tuple(faces), frame.shape[1], frame.shape[0], None if faces else "No face detected")
 
     def _extract_many(self, frame, options, *, max_faces, offset, num_jitters):
-        from ai_pipeline.preprocessing import orient_image, source_box
+        from ai_pipeline.preprocessing import orient_image, rotate_roll, source_box
         from ai_pipeline.detection import box_iou
 
         analysis = getattr(self, "_analysis", None)
@@ -210,6 +210,52 @@ class FaceRecognizer:
         else:
             prepared, attempts, elapsed = orient_image(frame), 1, 0
             boxes = self.detect_faces(frame)
+        if options is not None and options.version == "v3" and options.v3_multi_face_rescue:
+            candidates = []
+            for box in boxes:
+                native_box = source_box(prepared, box, frame.shape)
+                if native_box is not None:
+                    candidates.append((prepared, box, native_box))
+            # One frame can contain both upright and rolled faces. Search a small
+            # extra budget even after the first face was found, then merge in
+            # source coordinates so every face keeps its own transform.
+            extra_budget = min(options.v3_extra_detection_attempts, options.max_detection_attempts - attempts)
+            rescue = getattr(self, "detect_rescue_faces", self.detect_faces)
+            for angle in (20, -20, 40, -40)[:extra_budget]:
+                rotated = rotate_roll(orient_image(frame, mirror=options.mirror_input), angle)
+                for box in rescue(rotated.image):
+                    native_box = source_box(rotated, box, frame.shape)
+                    if native_box is not None:
+                        candidates.append((rotated, box, native_box))
+            unique = []
+            def same_face(one, other):
+                if box_iou(one, other) < 0.3:
+                    return False
+                ox, oy, ow, oh = one
+                px, py, pw, ph = other
+                return (abs(ox + ow / 2 - px - pw / 2) <= 0.25 * min(ow, pw)
+                        and abs(oy + oh / 2 - py - ph / 2) <= 0.25 * min(oh, ph))
+
+            for candidate in sorted(candidates, key=lambda item: (item[0] is not prepared,
+                                                                  -item[2][2] * item[2][3])):
+                if not any(same_face(candidate[2], existing[2]) for existing in unique):
+                    unique.append(candidate)
+            unique.sort(key=lambda item: (item[2][0], item[2][1], item[2][2], item[2][3]))
+            selected = {(offset + index) % len(unique) for index in range(min(max_faces, len(unique)))} if unique else set()
+            results = []
+            for index, (view, box, native_box) in enumerate(unique):
+                if index not in selected:
+                    results.append(EmbeddingResult(False, np.empty(0, np.float32), reason="Waiting for face processing",
+                                                   face_box=native_box))
+                    continue
+                try:
+                    result = analysis._process(frame, options, num_jitters=num_jitters,
+                                               detection=(view, [box], attempts, elapsed), include_pose=False)
+                except (ValueError, RuntimeError, cv2.error, np.linalg.LinAlgError):
+                    result = EmbeddingResult(False, np.empty(0, np.float32), reason="Cannot encode face",
+                                             face_box=native_box)
+                results.append(result)
+            return results
         # Hybrid detectors may overlap. Never count the same physical box twice.
         unique = []
         for box in sorted(boxes, key=lambda value: (-value[2] * value[3], value[0], value[1])):

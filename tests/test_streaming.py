@@ -160,3 +160,32 @@ def test_one_bad_face_does_not_block_others_and_budget_rotates_fairly():
     assert not second.faces[1].accepted and "dark" in second.faces[1].reason
     assert first.faces[1].reason == "Waiting for face processing"
     assert len(first.faces) == len(second.faces) == len(third.faces) == 3
+
+
+def test_v3_stream_finds_rolled_face_beside_upright_face_without_duplicates():
+    from types import SimpleNamespace
+    import cv2
+    from ai_pipeline.analysis import FaceAnalysis
+    from ai_pipeline.preprocessing import PreprocessingOptions, orient_image, rotate_roll, transform_box
+    from ai_pipeline.recognition import FaceRecognizer
+
+    frame = np.random.default_rng(22).integers(60, 190, (240, 500, 3), np.uint8)
+    first, second = (100, 70, 100, 100), (300, 70, 100, 100)
+    rotated = rotate_roll(orient_image(frame), 20)
+    rotated_first = transform_box(first, rotated.source_to_image, rotated.image.shape)
+    rotated_second = transform_box(second, rotated.source_to_image, rotated.image.shape)
+    recognizer = FaceRecognizer.__new__(FaceRecognizer)
+    recognizer._face_recognition = SimpleNamespace(face_encodings=lambda *_args, **_kwargs:
+                                                   [np.ones(128, np.float32)])
+    recognizer.detect_faces = lambda _image: [first]
+    rescue_calls = []
+    recognizer.detect_rescue_faces = lambda _image: rescue_calls.append(True) or [rotated_first, rotated_second]
+    options = PreprocessingOptions(mode="enforce", version="v3", lighting_method="none",
+                                   v3_extra_detection_attempts=1)
+    recognizer._analysis = FaceAnalysis(recognizer, preprocessing=options)
+    _, encoded = cv2.imencode(".png", frame)
+    batch = recognizer.extract_frame_embeddings(encoded.tobytes())
+    assert len(rescue_calls) == 1
+    assert len(batch.faces) == 2 and all(face.accepted for face in batch.faces)
+    assert batch.faces[0].face_box == first
+    assert batch.faces[1].face_box[0] > 250

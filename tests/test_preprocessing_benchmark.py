@@ -63,7 +63,8 @@ def test_far_calibration_is_conservative_including_ties_and_never_uses_test_scor
 def test_ablation_profiles_are_distinct_and_disable_shadow_overhead():
     base = PreprocessingOptions(shadow_v2=True)
     profiles = [profile_options(name, base) for name in
-                ("v1", "v2-geometry", "v2-gamma", "v2-clahe", "v2-adaptive", "v2-denoise", "v2-align")]
+                ("v1", "v2-geometry", "v2-gamma", "v2-clahe", "v2-adaptive", "v2-denoise", "v2-align",
+                 "v3-geometry", "v3-adaptive", "v3-denoise", "v3-align")]
     assert len({options.profile for options in profiles}) == len(profiles)
     assert all(not options.shadow_v2 and options.shadow_sample_rate == 0 for options in profiles)
     assert profile_options("legacy", base).mode == "off"
@@ -71,8 +72,9 @@ def test_ablation_profiles_are_distinct_and_disable_shadow_overhead():
         profile_options("nonexistent", base)
 
 
-@pytest.mark.parametrize("variant", ["original", "rotate-90", "rotate-180", "rotate-270", "roll-20",
-                                     "roll-minus20", "dark", "low-contrast", "noise", "jpeg"])
+@pytest.mark.parametrize("variant", ["original", "rotate-90", "rotate-180", "rotate-270", "roll-10",
+                                     "roll-minus10", "roll-20", "roll-minus20", "roll-30", "roll-minus30",
+                                     "mirror", "dark", "side-light", "low-contrast", "noise", "blur", "jpeg"])
 def test_synthetic_benchmark_inputs_keep_source_unchanged_and_share_size_policy(tmp_path, variant):
     import cv2
     from ai_pipeline.preprocessing import decode_bgr_image

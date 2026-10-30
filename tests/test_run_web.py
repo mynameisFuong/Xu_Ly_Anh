@@ -39,7 +39,8 @@ def test_retired_liveness_env_does_not_load_models_or_break_startup(tmp_path, mo
     build_default_recognizer.cache_clear()
     try:
         recognizer = build_default_recognizer()
-        assert recognizer.model_version == "0.1.0" and recognizer._analysis is None
+        assert recognizer.model_version.startswith("0.1.0:pre-v3-")
+        assert recognizer._analysis is not None
     finally:
         build_default_recognizer.cache_clear()
 
@@ -51,7 +52,7 @@ def test_retiring_old_settings_does_not_hide_unrelated_config_typos(tmp_path):
         Settings(_env_file=file)
 
 
-def test_v2_settings_reach_the_shared_recognizer_without_changing_v1_profile():
+def test_v2_settings_reach_the_shared_recognizer_without_changing_v3_default():
     from backend.app.services.face_templates import build_preprocessing_options
     from ai_pipeline.preprocessing import PreprocessingOptions
 
@@ -59,6 +60,6 @@ def test_v2_settings_reach_the_shared_recognizer_without_changing_v1_profile():
     options = build_preprocessing_options(settings)
     assert options.version == "v2" and options.denoise_method == "adaptive"
     assert not options.v2_align_eyes and options.shadow_sample_rate == 0.1
-    assert build_preprocessing_options(Settings(_env_file=None)).profile == PreprocessingOptions().profile
+    assert build_preprocessing_options(Settings(_env_file=None)).profile == PreprocessingOptions(version="v3").profile
     with pytest.raises(ValidationError):
         Settings(_env_file=None, preprocessing_max_detection_attempts=9)

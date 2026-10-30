@@ -97,9 +97,11 @@ Không có mẫu nhận diện trên máy đích; phải đăng ký lại để 
 
 ## Cấu hình và kiểm thử
 
-`.env.example` mặc định `PREPROCESSING_MODE=off`, detector HOG; cấu hình `enforce`
-v1/v2 và YuNet là tùy chọn. Đổi profile ảnh hưởng embedding có thể cần đăng ký lại
-năm góc. `run_web.py` đọc `.env` ở thư mục dự án; khởi động lại sau khi chỉnh.
+`.env.example` mặc định bật `PREPROCESSING_MODE=enforce` và
+`PREPROCESSING_VERSION=v3`. Detector HOG là mặc định trên máy mới; có thể dùng
+`hybrid`/YuNet khi đã tải model. Mẫu Face ID của v1/v2 không được ghép với
+embedding v3; cần đăng ký đủ năm góc trên máy mới. `run_web.py` đọc `.env` ở
+thư mục dự án; khởi động lại sau khi chỉnh.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pytest -q
@@ -123,3 +125,7 @@ OpenAPI tại `http://127.0.0.1:8000/docs`. Có thể chạy desktop bằng
   [đánh giá stream](docs/ATTENDANCE_RELIABILITY.md).
 - [Giả định](docs/ASSUMPTIONS.md); [lịch sử quyết định](docs/DECISIONS.md).
   Một số tài liệu lịch sử còn nhắc PAD đã gỡ và không mô tả runtime hiện tại.
+
+V3 hiện là profile hoạt động cho đăng ký và điểm danh. Công cụ xuất ảnh từng
+bước cùng [benchmark tiền xử lý](docs/PREPROCESSING_BENCHMARK.md) hỗ trợ kiểm tra
+chất lượng; chưa có phép đo trên nhiều người/camera đủ để khẳng định v3 luôn tốt hơn.

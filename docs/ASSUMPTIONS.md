@@ -13,5 +13,5 @@
   trước khi benchmark trên camera thực tế.
 - State xác nhận nhiều frame của worker hiện ở RAM một process. Triển khai nhiều
   process phải có chiến lược định tuyến/store chung nếu cần duy trì chuỗi xác nhận.
-- Các profile tiền xử lý v1/v2 đã có trong code, nhưng `.env.example` mặc định
-  `PREPROCESSING_MODE=off`; chưa bật v2 enforce nếu chưa benchmark/đăng ký lại.
+- V3 là profile mặc định cho cả đăng ký và nhận diện (`enforce`). V1/v2 còn trong
+  code để đối chiếu học thuật nhưng không dùng chung vector với gallery v3.

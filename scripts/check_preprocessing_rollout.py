@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", choices=("v1", "v2"), default="v2")
+    parser.add_argument("--version", choices=("v1", "v2", "v3"), default="v2")
     args = parser.parse_args()
     from sqlalchemy import select
     from backend.app.database import SessionLocal
@@ -41,8 +41,8 @@ def main():
         "current_complete_students": len(current), "target_complete_students": len(ready),
         "current_students_missing_target": len(current - ready),
         "ready_to_replace_current_roster": bool(current) and current.issubset(ready),
-        "guidance": "Benchmark first. Keep v1 while collecting five original-source poses for v2. "
-                    "Never relabel old embeddings or rebuild them from cropped display portraits.",
+        "guidance": "Each enrolled student needs five active templates for the selected profile. "
+                    "Do not relabel embeddings; re-enroll from camera for a representative evaluation.",
     }, ensure_ascii=False, indent=2))
 
 
