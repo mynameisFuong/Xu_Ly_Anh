@@ -700,15 +700,6 @@
     return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
   }
   async function initFaces() {
-    const classList = await getClasses();
-    $("faceClass").innerHTML =
-      '<option value="">Chọn lớp học</option>' +
-      classList
-        .map(
-          (x) =>
-            `<option value="${x.id}">${esc(x.code)} · ${esc(x.name)}</option>`,
-        )
-        .join("");
     await reloadFaces();
     const requestedStudent = new URLSearchParams(location.search).get(
       "student",
@@ -788,38 +779,6 @@
       if (document.hidden) enrollmentAudio.stop();
       else if (enrollStudentId) enrollmentAudio.scanning(Math.max(0, enrollReadyAt - performance.now()));
     });
-    $("importFaces").addEventListener(
-      "click",
-      run(async () => {
-        const classId = $("faceClass").value;
-        if (!classId) throw new Error("Chọn lớp học trước khi nhập ảnh.");
-        if (!$("importConsent").checked)
-          throw new Error("Cần xác nhận sự đồng ý trước khi nhập ảnh.");
-        const selected = [...$("faceFiles").files];
-        const files = selected.filter((x) =>
-          /\.(jpe?g|png|webp|bmp)$/i.test(x.name),
-        );
-        if (!files.length) throw new Error("Chọn thư mục có ảnh hợp lệ.");
-        const form = new FormData();
-        files.forEach((file) => form.append("files", file, file.name));
-        const result = await api(
-          `/admin/face-import?class_id=${encodeURIComponent(classId)}`,
-          { method: "POST", body: form },
-        );
-        $("importSummary").hidden = false;
-        $("importSummary").textContent =
-          `Đã nhập ${result.imported} ảnh; ${result.failed} lỗi. ${result.items
-            .filter((x) => x.status === "failed")
-            .slice(0, 3)
-            .map((x) => `${x.filename}: ${x.detail}`)
-            .join(" · ")}`;
-        await reloadFaces();
-        notify(
-          `Hoàn tất nhập ảnh: ${result.imported} thành công, ${result.failed} lỗi.`,
-          result.failed ? "warn" : "ok",
-        );
-      }),
-    );
     $("facesTable").addEventListener(
       "click",
       run(async (event) => {

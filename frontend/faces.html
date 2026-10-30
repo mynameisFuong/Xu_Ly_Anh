@@ -16,8 +16,7 @@
               <span class="eyebrow">Dữ liệu sinh trắc học</span>
               <h1>Đăng ký khuôn mặt</h1>
               <p class="lede">
-                Thu đủ năm góc nhìn đạt chất lượng để hoàn tất Face ID. Ảnh nhập
-                từ thư mục chỉ dùng làm dữ liệu tham chiếu.
+                Thu đủ năm góc nhìn đạt chất lượng qua camera để hoàn tất Face ID.
               </p>
             </div>
             <a class="btn secondary" href="/demo/students">Quản lý sinh viên</a>
@@ -94,49 +93,12 @@
             <section class="card card-pad">
               <div class="card-head">
                 <div>
-                  <h2>Nhập ảnh tham chiếu</h2>
-                  <p>
-                    Ảnh nhập không thay thế quy trình quét Face ID 5 góc. Tên
-                    file bắt đầu bằng MSSV, ví dụ SV001.jpg.
-                  </p>
+                  <h2>Xem ảnh đã đăng ký</h2>
+                  <p>Chọn “Xem ảnh” trong danh sách trạng thái đăng ký bên dưới.</p>
                 </div>
               </div>
-              <div class="field">
-                <label for="faceClass">Lớp học</label
-                ><select id="faceClass">
-                  <option value="">Chọn lớp học</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="faceFiles">Thư mục ảnh</label
-                ><input
-                  id="faceFiles"
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  webkitdirectory
-                  directory
-                /><small class="hint"
-                  >Chọn thư mục chứa các ảnh JPEG, PNG, WebP hoặc BMP.</small
-                >
-              </div>
-              <label class="checkline" for="importConsent">
-                <input id="importConsent" type="checkbox" />
-                <span
-                  >Tôi xác nhận các sinh viên trong thư mục đã đồng ý đăng ký
-                  khuôn mặt.</span
-                >
-              </label>
-              <button id="importFaces" class="btn">Nhập ảnh</button>
-              <div
-                id="importSummary"
-                class="notice"
-                hidden
-                style="margin-top: 18px"
-              ></div>
-              <div class="section-title"><h2>Xem ảnh đã đăng ký</h2></div>
               <div id="facePreview" class="preview">
-                <span>Chọn “Xem ảnh” ở danh sách bên dưới.</span>
+                <span>Chưa chọn ảnh.</span>
               </div>
             </section>
           </div>
