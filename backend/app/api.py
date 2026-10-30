@@ -1,7 +1,6 @@
 import csv
 import base64
 import uuid
-from hashlib import sha256
 from datetime import datetime, time, timezone
 from io import BytesIO, StringIO
 from functools import lru_cache
@@ -45,6 +44,8 @@ from backend.app.schemas import (
     FaceTemplateRead,
     FrameScanRequest,
     FrameScanResponse,
+    StreamScanRequest,
+    StreamScanResponse,
     LoginRequest,
     RecognitionEventCreate,
     RecognitionEventRead,
@@ -58,7 +59,6 @@ from backend.app.schemas import (
     StudentUpdate,
     UserCreate,
     UserRead,
-    WebLivenessState,
 )
 from backend.app.security import (
     hash_password,
@@ -87,41 +87,6 @@ def _camera_confirmations(min_hits: int, window_seconds: int):
     return CameraConfirmationStore(min_hits, window_seconds)
 
 
-@lru_cache(maxsize=1)
-def _web_liveness_store():
-    from backend.app.services.web_liveness import WebLivenessStore
-
-    return WebLivenessStore(get_settings())
-
-
-def _web_liveness_ready(recognizer):
-    settings = get_settings()
-    analysis = getattr(recognizer, "_analysis", None)
-    detector = getattr(analysis, "liveness", None)
-    return bool(
-        settings.liveness_mode == "enforce" and recognizer.supports_pose
-        and recognizer.distance_metric == "euclidean" and detector and detector.ready
-        and (getattr(detector, "can_enforce", False) or detector.approved)
-    )
-
-
-def _web_liveness_message(recognizer):
-    settings = get_settings()
-    if not settings.web_liveness_required:
-        return "Thử thách chuyển động đang tắt theo cấu hình."
-    if settings.liveness_mode != "enforce":
-        return "Backend chưa bật LIVENESS_MODE=enforce. Nếu .env đã bật, hãy khởi động lại bằng scripts/run_web.py để bỏ biến môi trường cũ của terminal."
-    if not recognizer or not recognizer.supports_pose or recognizer.distance_metric != "euclidean":
-        return "Thiếu engine Face ID đa góc. Cài engine theo README trong đúng môi trường Python đang chạy backend."
-    analysis = getattr(recognizer, "_analysis", None)
-    detector = getattr(analysis, "liveness", None)
-    if not detector or not detector.ready:
-        return "Model PAD chưa nạp được. Kiểm tra ONNX Runtime, tải model bằng scripts/download_liveness_models.py rồi khởi động lại backend."
-    if not _web_liveness_ready(recognizer):
-        return "Model PAD chưa được duyệt. Với thử nghiệm MiniFASNet local, kiểm tra LIVENESS_ALLOW_PRETRAINED trong .env."
-    return "Chống giả mạo đã sẵn sàng. Làm theo hướng dẫn quay đầu khi quét."
-
-
 def _localized_face_error(reason: str | None) -> str:
     text = reason or "Không thể phân tích khuôn mặt"
     translations = {
@@ -133,9 +98,8 @@ def _localized_face_error(reason: str | None) -> str:
         "Image is too dark": "Khung hình quá tối, vui lòng tăng ánh sáng",
         "Image is overexposed": "Khung hình quá sáng, vui lòng điều chỉnh ánh sáng",
         "Image is blurry": "Ảnh bị mờ, vui lòng giữ yên khuôn mặt",
-        "Liveness spoof suspected": "Phát hiện dấu hiệu ảnh in hoặc màn hình phát lại. Vui lòng dùng khuôn mặt thật.",
-        "Liveness uncertain": "Chưa xác minh được người thật. Vui lòng điều chỉnh ánh sáng và thử lại.",
-        "Liveness unavailable": "Chức năng xác minh người thật chưa sẵn sàng. Vui lòng thử lại hoặc liên hệ giảng viên.",
+        "Image has insufficient detail": "Ảnh thiếu chi tiết hoặc tương phản, vui lòng đổi vị trí và ánh sáng",
+        "Face is clipped": "Khuôn mặt bị cắt ở mép ảnh, vui lòng đưa toàn bộ khuôn mặt vào khung hình",
     }
     for prefix, message in translations.items():
         if text.startswith(prefix):
@@ -685,11 +649,6 @@ def add_recognition_event(
     payload: RecognitionEventCreate,
     db: Session = Depends(get_db),
 ):
-    if get_settings().liveness_mode == "enforce" and payload.decision == "recognized":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Liveness enforcement requires camera-scan-frame; unverified recognition events cannot mark attendance.",
-        )
     event, _attendance = create_recognition_event(db, session_id=session_id, payload=payload)
     return event
 
@@ -749,25 +708,36 @@ def scan_frame(
     _user: User = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
 ) -> FrameScanResponse:
-    return _scan_frame(session_id, payload, db, web_owner=("user", _user.id, session_id))
+    return _scan_frame(session_id, payload, db)
 
 
-@router.post("/sessions/{session_id}/liveness-challenge", response_model=WebLivenessState)
-def start_liveness_challenge(
+@router.post("/sessions/{session_id}/scan-stream", response_model=StreamScanResponse)
+def scan_stream(
     session_id: int,
+    payload: StreamScanRequest,
     user: User = Depends(require_user_or_admin),
     db: Session = Depends(get_db),
-) -> dict:
-    class_session = db.get(ClassSession, session_id)
-    if class_session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-    if class_session.status != SessionStatus.OPEN.value:
-        raise HTTPException(status_code=409, detail="Session is not open")
-    if not get_settings().web_liveness_required:
-        return {"status": "off", "message": "Xác minh chuyển động đang tắt"}
-    if not _web_liveness_ready(build_default_recognizer()):
-        raise HTTPException(status_code=503, detail=_web_liveness_message(build_default_recognizer()))
-    return _web_liveness_store().start(("user", user.id, session_id))
+) -> StreamScanResponse:
+    from backend.app.services.stream_recognition import scan_stream_frame
+
+    return scan_stream_frame(db, session_id=session_id, payload=payload, owner=("user", user.id),
+                             recognizer=build_default_recognizer(), save_evidence=_save_attendance_evidence,
+                             localize_reason=_localized_face_error)
+
+
+@router.post("/sessions/{session_id}/camera-scan-stream", response_model=StreamScanResponse,
+             dependencies=[Depends(verify_camera_token)])
+def scan_camera_stream(
+    session_id: int,
+    payload: StreamScanRequest,
+    dry_run: bool = False,
+    db: Session = Depends(get_db),
+) -> StreamScanResponse:
+    from backend.app.services.stream_recognition import scan_stream_frame
+
+    return scan_stream_frame(db, session_id=session_id, payload=payload, owner=("camera",), dry_run=dry_run,
+                             recognizer=build_default_recognizer(), save_evidence=_save_attendance_evidence,
+                             localize_reason=_localized_face_error)
 
 
 @router.post(
@@ -788,7 +758,7 @@ def scan_camera_frame(
 
 
 def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_run: bool = False,
-                confirmation_key=None, web_owner=None) -> FrameScanResponse:
+                confirmation_key=None) -> FrameScanResponse:
     settings = get_settings()
     confirmations = _camera_confirmations(settings.attendance_min_hits, settings.attendance_window_seconds)
     class_session = db.get(ClassSession, session_id)
@@ -797,50 +767,21 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
     if class_session.status != SessionStatus.OPEN.value:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not open")
 
-    web_guard = web_owner is not None and settings.web_liveness_required
-    challenge_store = _web_liveness_store() if web_guard else None
-    if web_guard and not challenge_store.valid(payload.challenge_id, web_owner):
-        return FrameScanResponse(
-            decision="unknown", message="Cần bắt đầu xác minh người thật trước khi điểm danh.",
-            liveness={"status": "required", "message": "Bắt đầu thử thách mới"},
-        )
-
     recognizer = build_default_recognizer()
-    if web_guard and not _web_liveness_ready(recognizer):
-        challenge_store.cancel(payload.challenge_id, web_owner)
-        return FrameScanResponse(decision="unknown", message="Chức năng chống giả mạo chưa sẵn sàng.",
-                                 liveness={"status": "unavailable"})
     image_base64 = payload.image_base64
     if "," in image_base64:
         image_base64 = image_base64.split(",", 1)[1]
     try:
         image_bytes = base64.b64decode(image_base64, validate=True)
     except ValueError as exc:
-        if challenge_store:
-            challenge_store.cancel(payload.challenge_id, web_owner)
+        confirmations.reset(confirmation_key)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image data") from exc
 
     result = recognizer.extract_single_embedding(image_bytes)
     if not result.accepted:
         confirmations.reset(confirmation_key)
-        reason = result.reason or ""
-        retryable = reason in {"No face detected", "Cannot encode face", "Liveness uncertain"} or reason.startswith((
-            "Face is too small:", "Image is too dark:", "Image is overexposed:", "Image is blurry:",
-        ))
-        if challenge_store and retryable:
-            hint = ("Tạm mất khuôn mặt; quay đầu chậm, giảm góc quay và giữ mặt trong khung"
-                    if reason == "No face detected" else _localized_face_error(reason))
-            state = challenge_store.retry_frame(
-                payload.challenge_id, web_owner, step_token=payload.step_token, sequence=payload.sequence,
-                digest=sha256(image_bytes).hexdigest(), message=hint,
-            )
-            return FrameScanResponse(decision="unknown", message=state["message"],
-                                     face_box=result.face_box, liveness=state)
-        if challenge_store:
-            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
             decision="unknown", message=_localized_face_error(result.reason), face_box=result.face_box,
-            liveness={"status": "failed", "message": _localized_face_error(result.reason)} if web_guard else None,
         )
 
     try:
@@ -873,11 +814,9 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
 
     if not templates:
         confirmations.reset(confirmation_key)
-        if challenge_store:
-            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
             decision="unknown", message="Lớp học chưa có đủ 5 góc Face ID cùng phiên bản đang chạy. Vui lòng đăng ký lại nếu vừa đổi cấu hình xử lý ảnh.",
-            face_box=result.face_box, liveness={"status": "failed"} if web_guard else None,
+            face_box=result.face_box,
         )
 
     settings = get_settings()
@@ -898,38 +837,18 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
     )
     if match.student_id is None:
         confirmations.reset(confirmation_key)
-        if challenge_store:
-            challenge_store.cancel(payload.challenge_id, web_owner)
         return FrameScanResponse(
             decision=match.decision,
             message="Độ tin cậy chưa đủ, vui lòng nhìn thẳng vào camera",
             candidate_score=match.score,
             second_score=match.second_score,
             face_box=result.face_box,
-            liveness={"status": "failed"} if web_guard else None,
         )
-
-    liveness_state = None
-    if challenge_store:
-        # Kiểm tra phòng thủ: recognizer phải chứng minh PAD đã chạy trên frame này.
-        pad = getattr(getattr(result, "diagnostics", None), "liveness", None)
-        if pad is None or pad.status != "live":
-            challenge_store.cancel(payload.challenge_id, web_owner)
-            return FrameScanResponse(decision="unknown", message="Frame chưa được xác minh chống giả mạo.",
-                                     liveness={"status": "failed"}, face_box=result.face_box)
-        liveness_state = challenge_store.observe(
-            payload.challenge_id, web_owner, step_token=payload.step_token, sequence=payload.sequence,
-            digest=sha256(image_bytes).hexdigest(), result=result, student_id=match.student_id,
-        )
-        if liveness_state["status"] != "passed":
-            return FrameScanResponse(decision="unknown", message=liveness_state["message"],
-                                     face_box=result.face_box, liveness=liveness_state)
 
     if confirmation_key is not None and not confirmations.observe(confirmation_key, match.student_id):
         return FrameScanResponse(
             decision="low_confidence", message="Đang xác nhận khuôn mặt qua nhiều khung hình",
             face_box=result.face_box,
-            liveness=liveness_state,
         )
 
     student = db.get(Student, match.student_id)
@@ -953,7 +872,6 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
             second_score=match.second_score,
             attendance=existing_attendance,
             face_box=result.face_box,
-            liveness=liveness_state,
         )
 
     if dry_run:
@@ -979,7 +897,7 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
     _event, attendance = create_recognition_event(db, session_id=session_id, payload=event_payload)
     if attendance is None:
         return FrameScanResponse(decision="unknown", message="Chưa lưu được điểm danh. Vui lòng kiểm tra danh sách lớp hoặc liên hệ giảng viên.",
-                                 face_box=result.face_box, liveness=liveness_state)
+                                 face_box=result.face_box)
     _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
     message = "Đúng giờ"
     if attendance is not None and attendance.status == "late":
@@ -997,7 +915,6 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
         second_score=match.second_score,
         attendance=attendance,
         face_box=result.face_box,
-        liveness=liveness_state,
     )
 
 
@@ -1065,22 +982,22 @@ def _pipeline_status(*, load_engine: bool = True) -> dict:
     settings = get_settings()
     recognizer = build_default_recognizer() if load_engine else None
     analysis = getattr(recognizer, "_analysis", None)
-    detector = analysis.liveness if analysis is not None else None
     face_detector = getattr(recognizer, "_face_detector", None)
+    options = analysis.preprocessing if analysis else None
+    candidate = analysis.shadow_options() if analysis else None
+
     return {
         "engine": recognizer.model_name if recognizer else None,
         "model_version": recognizer.model_version if recognizer else None,
         "face_detection": face_detector.status() if face_detector else {"backend": "hog", "yunet_ready": False},
         "preprocessing_mode": settings.preprocessing_mode,
-        "liveness_mode": settings.liveness_mode,
-        "liveness_backend": settings.liveness_backend,
-        "liveness_ready": bool(detector and detector.ready),
-        "liveness_approved": bool(detector and detector.approved),
-        "liveness_model_version": detector.model_version if detector else None,
-        "liveness_allow_pretrained": settings.liveness_allow_pretrained,
-        "web_liveness_required": settings.web_liveness_required,
-        "web_liveness_ready": _web_liveness_ready(recognizer) if recognizer else False,
-        "web_liveness_message": _web_liveness_message(recognizer),
+        "stream_recognition": True,
+        "stream_max_faces_per_frame": settings.stream_max_faces_per_frame,
+        "stream_confirmation_hits": settings.attendance_min_hits,
+        "preprocessing_version": settings.preprocessing_version,
+        "preprocessing_profile": options.profile if options else None,
+        "shadow_candidate_profile": candidate.profile if candidate else None,
+        "shadow_sample_rate": options.shadow_sample_rate if candidate else 0,
         "metrics": analysis.metrics() if analysis else None,
     }
 
@@ -1094,7 +1011,7 @@ def face_analysis_status(_user: User = Depends(require_user_or_admin)) -> dict:
 def camera_pipeline_status() -> dict:
     settings = get_settings()
     # Legacy local workers can use a backend without any camera dependencies.
-    return _pipeline_status(load_engine=settings.preprocessing_mode != "off" or settings.liveness_mode != "off")
+    return _pipeline_status(load_engine=settings.preprocessing_mode != "off")
 
 
 @router.get("/face-enrollment/engine")

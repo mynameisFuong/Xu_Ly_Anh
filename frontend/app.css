@@ -644,10 +644,10 @@ tbody tr:hover {
     box-shadow 0.25s;
 }
 .enrollment-camera.is-scanning .face-guide-ring {
-  border-color: #65e5d0;
+  border-color: #f2c96b;
   box-shadow:
-    0 0 0 8px #2ccdb430,
-    0 0 30px #2ccdb44d;
+    0 0 0 8px #f2c96b30,
+    0 0 30px #f2c96b4d;
 }
 .face-guide-arrow {
   position: absolute;
@@ -730,6 +730,32 @@ tbody tr:hover {
 .camera-box canvas {
   display: none;
 }
+.attendance-camera video {
+  object-fit: contain;
+}
+.scan-faces {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+.scan-faces .scan-face-label {
+  min-width: 84px;
+  pointer-events: auto;
+}
+.scan-faces .scan-face-label strong,
+.scan-faces .scan-face-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scan-guide {
+  left: 4%;
+  top: 4%;
+  width: 92%;
+  height: 92%;
+  border-style: dashed;
+}
 .scan-face-box {
   position: absolute;
   z-index: 2;
@@ -758,7 +784,7 @@ tbody tr:hover {
 .scan-face-label {
   position: absolute;
   left: -3px;
-  top: calc(100% + 8px);
+  bottom: calc(100% + 6px);
   width: max-content;
   max-width: min(280px, 75vw);
   min-width: 120px;
@@ -766,14 +792,17 @@ tbody tr:hover {
   gap: 2px;
   padding: 8px 11px;
   border-radius: 9px;
-  background: #092f35eb;
+  background: #73521bee;
   color: #fff;
   overflow-wrap: anywhere;
   box-shadow: 0 6px 18px #061c2452;
 }
-.scan-face-box.label-above .scan-face-label {
-  top: auto;
-  bottom: calc(100% + 8px);
+.scan-face-box.label-inside .scan-face-label {
+  bottom: auto;
+  top: 6px;
+}
+.scan-face-box.recognized .scan-face-label {
+  background: #075b3aee;
 }
 .scan-face-label strong {
   font-size: 14px;
@@ -782,6 +811,24 @@ tbody tr:hover {
 .scan-face-label span {
   font-size: 12px;
   color: #a6e9db;
+}
+.enrollment-sound {
+  margin-top: 16px;
+  margin-bottom: 6px;
+}
+@media (max-width: 760px) {
+  .scan-face-label {
+    min-width: 100px;
+    padding: 5px 8px;
+    gap: 1px;
+  }
+  .scan-face-label strong {
+    font-size: 12px;
+  }
+  .scan-face-label span {
+    font-size: 11px;
+    line-height: 1.25;
+  }
 }
 .attendance-camera:has(.scan-face-box:not([hidden])) .camera-hint {
   display: none;
@@ -1092,9 +1139,5 @@ tbody tr:hover {
   color: var(--muted);
   margin: 4px 0 0;
 }
-/* Phản hồi liveness luôn tách khỏi trạng thái đã lưu điểm danh. */
-.liveness-panel { margin-top: 14px; padding: 14px 16px; border: 1px solid #bdd6ef; border-radius: 12px; background: #f0f7ff; }
-.liveness-panel p { margin: 6px 0 10px; line-height: 1.5; }
-.liveness-panel progress { width: 100%; height: 8px; accent-color: #2563eb; }
-.liveness-panel[data-state="failed"], .liveness-panel[data-state="unavailable"] { background: #fff4ee; border-color: #f1c1a7; }
-.liveness-panel[data-state="passed"] { background: #effaf3; border-color: #b0ddbd; }
+/* Hướng dẫn nhận diện; thành công chỉ hiển thị sau khi server lưu điểm danh. */
+.scan-feedback { margin-top: 14px; padding: 14px 16px; border: 1px solid #bdd6ef; border-radius: 12px; background: #f0f7ff; line-height: 1.5; }

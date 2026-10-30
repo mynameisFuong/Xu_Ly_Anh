@@ -1,3 +1,8 @@
+> Tài liệu lịch sử: liveness/PAD đã được gỡ theo yêu cầu ngày 30/10/2026.
+> Nội dung/kết quả bên dưới thuộc phiên bản trước, không phải hướng dẫn vận hành
+> hiện hành. Xem [pipeline hiện tại](FACE_ANALYSIS.md) và
+> [kế hoạch preprocessing](PREPROCESSING_UPGRADE_PLAN.md).
+
 # Kiểm chứng bản tích hợp liveness web — 29/10/2026
 
 ## Môi trường và kết quả phần mềm

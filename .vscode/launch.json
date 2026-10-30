@@ -2,31 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Train liveness (PAD)",
+      "name": "Run attendance web",
       "type": "debugpy",
       "request": "launch",
-      "program": "${workspaceFolder}/scripts/train_liveness.py",
+      "program": "${workspaceFolder}/scripts/run_web.py",
       "python": "${workspaceFolder}/.venv313/Scripts/python.exe",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
-      "args": [
-        "--dataset", "${input:padDataset}",
-        "--output", "${input:padOutput}"
-      ]
-    }
-  ],
-  "inputs": [
-    {
-      "id": "padDataset",
-      "type": "promptString",
-      "description": "CSV dữ liệu PAD (path,label,split,subject_id,session_id)",
-      "default": "storage/pad-data/dataset.csv"
-    },
-    {
-      "id": "padOutput",
-      "type": "promptString",
-      "description": "Thư mục mới để lưu model PAD",
-      "default": "storage/pad-models/experiment-01"
+      "args": []
     }
   ]
 }

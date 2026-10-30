@@ -3,6 +3,8 @@ import json
 import threading
 import time
 import uuid
+import sys
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import (
@@ -24,6 +26,10 @@ from tkinter import (
 
 import cv2
 import requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from ai_pipeline.overlay import draw_stream_faces
 
 
 API_BASE = "http://127.0.0.1:8000"
@@ -71,12 +77,12 @@ class ApiClient:
         self._raise_for_status(response)
         return response.json()
 
-    def post_json(self, path: str, payload: dict) -> dict:
+    def post_json(self, path: str, payload: dict, *, timeout: float = 20) -> dict:
         response = requests.post(
             f"{self.base_url}{path}",
             headers={**self.headers(), "Content-Type": "application/json"},
             data=json.dumps(payload),
-            timeout=20,
+            timeout=timeout,
         )
         self._raise_for_status(response)
         return response.json()
@@ -440,50 +446,68 @@ class App:
         refresh_requests()
 
     def _camera_loop(self, session_id: int, status: StringVar, refresh_board) -> None:
-        self.capture = cv2.VideoCapture(0)
-        if not self.capture.isOpened():
+        capture = cv2.VideoCapture(0)
+        self.capture = capture
+        if not capture.isOpened():
             status.set("Khong mo duoc camera")
             self.camera_running = False
             return
-        last_scan = 0.0
-        challenge = None
-        while self.camera_running:
-            ok, frame = self.capture.read()
+        stream_id, frame_id = str(uuid.uuid4()), 0
+        executor = ThreadPoolExecutor(max_workers=1)
+        pending, latest, last_result_at = None, {}, float("-inf")
+        pending_frame = latest_frame = None
+        last_scan, recorded = float("-inf"), set()
+
+        def scan(image, number):
+            ok, encoded = cv2.imencode(".jpg", image)
             if not ok:
-                status.set("Khong doc duoc frame camera")
-                time.sleep(1)
-                continue
-            cv2.imshow("Attendance Camera", frame)
-            if time.time() - last_scan >= 1.4:
-                last_scan = time.time()
-                ok, encoded = cv2.imencode(".jpg", frame)
-                if ok:
-                    payload = {
-                        "camera_id": f"desktop-{self.api.user_id}",
-                        "image_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
-                        "idempotency_key": f"desktop-{uuid.uuid4()}",
-                    }
+                return {"faces": [], "message": "Không chụp được ảnh camera"}
+            return self.api.post_json(f"/sessions/{session_id}/scan-stream", {
+                "camera_id": f"desktop-{self.api.user_id}", "stream_id": stream_id, "frame_id": number,
+                "image_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+            }, timeout=45)
+
+        try:
+            while self.camera_running and self.capture is capture:
+                ok, frame = capture.read()
+                if not ok:
+                    time.sleep(0.1)
+                    continue
+                if pending is not None and pending.done():
+                    refresh = False
                     try:
-                        if challenge is None:
-                            challenge = self.api.post_json(f"/sessions/{session_id}/liveness-challenge", {})
-                        payload.update({key: challenge.get(key) for key in ("challenge_id", "step_token", "sequence")})
-                        result = self.api.post_json(f"/sessions/{session_id}/scan-frame", payload)
-                        state = result.get("liveness")
-                        if state:
-                            challenge = state if state["status"] == "pending" else None
-                        if result["decision"] == "recognized":
-                            status.set(
-                                f"{result['full_name']} ({result['student_code']}) - {result['class_name']} - {result['message']}"
-                            )
-                            refresh_board()
-                        else:
-                            status.set(result["message"])
+                        latest = pending.result()
+                        for face in latest.get("faces", []):
+                            if face.get("attendance") and face.get("student_id") not in recorded:
+                                recorded.add(face["student_id"])
+                                refresh = True
+                        message = latest.get("message", "Đang quét liên tục")
                     except Exception as exc:
-                        challenge = None
-                        status.set(str(exc))
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-        self._stop_camera()
+                        latest, message = {}, str(exc)
+                    last_result_at = time.monotonic()
+                    latest_frame = pending_frame
+                    pending = None
+
+                    def update_ui(text=message, reload_board=refresh):
+                        if self.camera_running and self.capture is capture:
+                            status.set(text)
+                            if reload_board:
+                                refresh_board()
+
+                    self.root.after(0, update_ui)
+                if pending is None and time.monotonic() - last_scan >= 0.1:
+                    last_scan = time.monotonic()
+                    pending_frame = frame.copy()
+                    pending = executor.submit(scan, pending_frame, frame_id)
+                    frame_id += 1
+                visible = latest if time.monotonic() - last_result_at <= 1.5 else {}
+                cv2.imshow("Attendance Camera", draw_stream_faces(frame, visible, reference_frame=latest_frame))
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    break
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+            if self.capture is capture:
+                self._stop_camera()
 
     def _stop_camera(self) -> None:
         self.camera_running = False

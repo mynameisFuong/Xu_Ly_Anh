@@ -82,19 +82,22 @@
         const body = await response.json();
         detail = body.detail || detail;
       } catch (_) {}
-      throw new Error(
+      const error = new Error(
         Array.isArray(detail)
           ? detail.map((x) => x.msg).join("; ")
           : String(detail),
       );
+      error.status = response.status;
+      throw error;
     }
     if (response.status === 204) return null;
     return response.json();
   }
-  const json = (method, path, body) =>
+  const json = (method, path, body, options = {}) =>
     api(path, {
+      ...options,
       method,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...options.headers, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
   const run =
@@ -361,6 +364,80 @@
   let enrollTimer = null;
   let enrollBusy = false;
   let neutralPitch = null;
+  let enrollEpoch = 0;
+  let enrollReadyAt = 0;
+  let enrollStarting = false;
+  function createEnrollmentAudio() {
+    let context = null, pulseTimer = null, resumeTimer = null;
+    const tones = new Set();
+    const enabled = () => $("enrollSound")?.checked !== false;
+    function stop({ keepTone = false } = {}) {
+      clearInterval(pulseTimer);
+      clearTimeout(resumeTimer);
+      pulseTimer = resumeTimer = null;
+      if (!keepTone) {
+        for (const oscillator of tones) {
+          try { oscillator.stop(); } catch (_) {}
+        }
+        tones.clear();
+      }
+    }
+    function tone(duration, frequency) {
+      if (!enabled() || document.hidden || context?.state !== "running") return;
+      try {
+        const oscillator = context.createOscillator();
+        const gain = context.createGain();
+        const now = context.currentTime;
+        oscillator.type = "sine";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0, now);
+        gain.gain.linearRampToValueAtTime(0.12, now + 0.01);
+        gain.gain.setValueAtTime(0.12, now + duration - 0.02);
+        gain.gain.linearRampToValueAtTime(0, now + duration);
+        oscillator.connect(gain);
+        gain.connect(context.destination);
+        tones.add(oscillator);
+        oscillator.onended = () => {
+          tones.delete(oscillator);
+          oscillator.disconnect();
+          gain.disconnect();
+        };
+        oscillator.start(now);
+        oscillator.stop(now + duration);
+      } catch (_) {
+        stop();
+      }
+    }
+    return {
+      async unlock() {
+        if (!enabled()) return false;
+        try {
+          const Audio = window.AudioContext || window.webkitAudioContext;
+          if (!Audio) return false;
+          if (!context || context.state === "closed") context = new Audio();
+          if (context.state !== "running") await context.resume();
+          return context.state === "running";
+        } catch (_) { return false; }
+      },
+      scanning(delay = 0) {
+        stop({ keepTone: delay > 0 });
+        const begin = () => {
+          if (!enabled() || document.hidden || !enrollStudentId || enrollIndex >= poses.length) return;
+          tone(0.09, 880);
+          pulseTimer = setInterval(() => tone(0.09, 880), 650);
+        };
+        if (delay > 0) resumeTimer = setTimeout(begin, delay);
+        else begin();
+      },
+      captured() { stop(); tone(0.65, 1046.5); },
+      stop,
+      close() {
+        stop();
+        if (context && context.state !== "closed") context.close().catch(() => {});
+      },
+    };
+  }
+  const enrollmentAudio = createEnrollmentAudio();
   function renderEnrollment(message) {
     $("enrollProgress").hidden = false;
     $("poseList").innerHTML = poses
@@ -389,9 +466,12 @@
       Boolean(enrollStudentId) && enrollIndex < 5,
     );
   }
-  function stopEnrollment() {
+  function stopEnrollment({ keepCompletionTone = false } = {}) {
     if (enrollTimer) clearInterval(enrollTimer);
     enrollTimer = null;
+    enrollEpoch += 1;
+    enrollReadyAt = 0;
+    enrollmentAudio.stop({ keepTone: keepCompletionTone });
     enrollStudentId = null;
     neutralPitch = null;
     $("captureFace").textContent = "Bắt đầu quét 5 góc";
@@ -399,7 +479,8 @@
     $("enrollmentCamera").classList.remove("is-scanning");
   }
   async function scanEnrollment() {
-    if (enrollBusy || !enrollStudentId || enrollIndex >= 5) return;
+    if (enrollBusy || !enrollStudentId || enrollIndex >= 5 || document.hidden || performance.now() < enrollReadyAt) return;
+    const epoch = enrollEpoch, studentId = enrollStudentId, poseIndex = enrollIndex;
     enrollBusy = true;
     try {
       const video = $("faceVideo"),
@@ -412,24 +493,29 @@
         .drawImage(video, 0, 0, canvas.width, canvas.height);
       const result = await json(
         "POST",
-        `/students/${enrollStudentId}/face-enrollment/scan`,
+        `/students/${studentId}/face-enrollment/scan`,
         {
           image_base64: canvas.toDataURL("image/jpeg", 0.88),
-          target_pose: poses[enrollIndex].id,
+          target_pose: poses[poseIndex].id,
           neutral_pitch: neutralPitch,
         },
       );
+      if (epoch !== enrollEpoch || studentId !== enrollStudentId || poseIndex !== enrollIndex) return;
       if (result.accepted) {
-        if (poses[enrollIndex].id === "front" && Number.isFinite(result.pitch))
+        if (poses[poseIndex].id === "front" && Number.isFinite(result.pitch))
           neutralPitch = result.pitch;
+        enrollmentAudio.captured();
         enrollIndex = result.captured_poses.length;
         renderEnrollment(
           result.completed ? "Face ID đã sẵn sàng để điểm danh." : null,
         );
         if (result.completed) {
-          stopEnrollment();
+          stopEnrollment({ keepCompletionTone: true });
           await reloadFaces();
           notify("Đã hoàn tất đăng ký Face ID 5 góc.");
+        } else {
+          enrollReadyAt = performance.now() + 2000;
+          enrollmentAudio.scanning(2000);
         }
       } else {
         const current = poses[enrollIndex];
@@ -446,6 +532,7 @@
         );
       }
     } catch (error) {
+      if (epoch !== enrollEpoch) return;
       stopEnrollment();
       notify(error.message, "error");
     } finally {
@@ -536,31 +623,64 @@
           renderEnrollment("Đã tạm dừng. Bắt đầu lại sẽ xóa các góc vừa quét.");
           return;
         }
-        const id = $("faceStudent").value;
-        if (!id) throw new Error("Chọn sinh viên đã đồng ý trước khi quét.");
-        const student = faceStudents.find((item) => item.id === Number(id));
-        const engine = await api("/face-enrollment/engine");
-        if (!engine.available)
-          throw new Error(
-            "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README.",
-          );
-        if (!faceStream) faceStream = await openCamera("faceVideo");
-        if (
-          student?.face_template_count &&
-          !confirm("Quét lại sẽ vô hiệu hóa các mẫu khuôn mặt cũ. Tiếp tục?")
-        )
-          return;
-        await api(`/students/${id}/face-enrollment/reset`, { method: "POST" });
-        enrollStudentId = id;
-        enrollIndex = 0;
-        neutralPitch = null;
-        $("faceStudent").disabled = true;
-        $("captureFace").textContent = "Dừng quét";
-        renderEnrollment();
-        enrollTimer = setInterval(scanEnrollment, 1000);
-        scanEnrollment();
+        if (enrollStarting) return;
+        enrollStarting = true;
+        $("captureFace").disabled = true;
+        const startingEpoch = enrollEpoch;
+        try {
+          const id = $("faceStudent").value;
+          if (!id) throw new Error("Chọn sinh viên đã đồng ý trước khi quét.");
+          $("faceStudent").disabled = true;
+          // Unlock while handling the click, before camera/network awaits.
+          const soundReady = await enrollmentAudio.unlock();
+          $("enrollSoundHint").textContent = $("enrollSound").checked && !soundReady
+            ? "Chưa phát được âm thanh. Bạn vẫn có thể quét theo hướng dẫn trên màn hình."
+            : "Tít ngắn lặp lại: đang chờ ghi góc. Tít dài: đã ghi nhận, nhìn màn hình để đổi góc.";
+          const student = faceStudents.find((item) => item.id === Number(id));
+          const engine = await api("/face-enrollment/engine");
+          if (!engine.available)
+            throw new Error(
+              "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README.",
+            );
+          if (!faceStream) faceStream = await openCamera("faceVideo");
+          if (
+            student?.face_template_count &&
+            !confirm("Quét lại sẽ vô hiệu hóa các mẫu khuôn mặt cũ. Tiếp tục?")
+          )
+            return;
+          if (startingEpoch !== enrollEpoch) return;
+          await api(`/students/${id}/face-enrollment/reset`, { method: "POST" });
+          if (startingEpoch !== enrollEpoch) return;
+          enrollEpoch += 1;
+          enrollStudentId = id;
+          enrollIndex = 0;
+          enrollReadyAt = 0;
+          neutralPitch = null;
+          $("faceStudent").disabled = true;
+          $("captureFace").textContent = "Dừng quét";
+          renderEnrollment();
+          enrollmentAudio.scanning();
+          enrollTimer = setInterval(scanEnrollment, 1000);
+          scanEnrollment();
+        } finally {
+          enrollStarting = false;
+          $("captureFace").disabled = false;
+          if (!enrollStudentId) $("faceStudent").disabled = false;
+        }
       }),
     );
+    $("enrollSound").addEventListener("change", run(async () => {
+      if (!$("enrollSound").checked) { enrollmentAudio.stop(); return; }
+      if (await enrollmentAudio.unlock()) {
+        if (enrollStudentId) enrollmentAudio.scanning(Math.max(0, enrollReadyAt - performance.now()));
+      } else {
+        $("enrollSoundHint").textContent = "Chưa phát được âm thanh. Bạn vẫn có thể quét theo hướng dẫn trên màn hình.";
+      }
+    }));
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) enrollmentAudio.stop();
+      else if (enrollStudentId) enrollmentAudio.scanning(Math.max(0, enrollReadyAt - performance.now()));
+    });
     $("importFaces").addEventListener(
       "click",
       run(async () => {
@@ -615,6 +735,7 @@
     );
     window.addEventListener("pagehide", () => {
       stopEnrollment();
+      enrollmentAudio.close();
       faceStream?.getTracks().forEach((track) => track.stop());
       if (faceUrl) URL.revokeObjectURL(faceUrl);
     });
@@ -668,96 +789,159 @@
 
   let scanStream = null,
     scanTimer = null,
+    scanActive = false,
+    scanStarting = false,
     scanBusy = false,
     activeSession = null,
     latestBoard = null,
     lastScanResult = null,
-    scanChallenge = null,
     scanEpoch = 0,
-    scanPolicy = null;
-  function renderLiveness(state, message) {
-    const panel = $("livenessPanel");
-    if (!panel) return;
-    panel.dataset.state = state?.status || "pending";
-    $("livenessTitle").textContent = state?.status === "passed" ? "Đã xác minh người thật" : "Xác minh người thật";
-    $("livenessHint").textContent = message || state?.message || "Làm theo hướng dẫn và giữ một khuôn mặt trong khung hình.";
-    $("livenessProgress").max = state?.total_steps || 7;
-    $("livenessProgress").value = state?.status === "passed" ? 7 : (state?.step || 0);
+    scanStreamId = null,
+    scanFrameId = 0,
+    lastScanVideoTime = -1,
+    scanAbort = null,
+    overlayTimer = null,
+    motionTimer = null,
+    analyzedPixels = null,
+    scanErrors = 0,
+    boardRefreshBusy = false,
+    lastBoardRefresh = 0;
+  const loggedAttendances = new Set();
+  const motionCanvas = document.createElement("canvas");
+  motionCanvas.width = 128;
+  motionCanvas.height = 96;
+  const motionContext = motionCanvas.getContext("2d", { willReadFrequently: true });
+  function streamPixels(source) {
+    motionContext.drawImage(source, 0, 0, 128, 96);
+    return motionContext.getImageData(0, 0, 128, 96).data;
   }
-  function renderScanFace(result) {
-    const box = $("scanFaceBox");
+  function auditLiveFaces(repaint = true) {
+    if (!scanActive || document.hidden || !analyzedPixels || !lastScanResult) return;
+    const faces = lastScanResult.faces.filter(face => face.decision === "recognized" && face.attendance && face.live_valid !== false);
+    if (!faces.length || $("scanVideo").readyState < 2) return;
+    let current;
+    try { current = streamPixels($("scanVideo")); } catch (_) { return; }
+    let changed = false;
+    for (const face of faces) {
+      if (!Array.isArray(face.face_box) || face.face_box.length !== 4) continue;
+      const [x, y, width, height] = face.face_box;
+      const sx = 128 / lastScanResult.frame_width, sy = 96 / lastScanResult.frame_height;
+      const left = Math.max(0, Math.floor((x + width * 0.15) * sx));
+      const right = Math.min(128, Math.ceil((x + width * 0.85) * sx));
+      const top = Math.max(0, Math.floor((y + height * 0.15) * sy));
+      const bottom = Math.min(96, Math.ceil((y + height * 0.85) * sy));
+      let total = 0, difference = 0, largeChanges = 0;
+      for (let py = top; py < bottom; py++) for (let px = left; px < right; px++) {
+        const index = (py * 128 + px) * 4;
+        for (let channel = 0; channel < 3; channel++) {
+          const delta = Math.abs(current[index + channel] - analyzedPixels[index + channel]);
+          difference += delta;
+          largeChanges += delta > 18 ? 1 : 0;
+          total++;
+        }
+      }
+      // This only invalidates stale overlays. It never confirms an identity or writes attendance.
+      if (!total || difference / total > 10 || largeChanges / total > 0.15) {
+        face.live_valid = false;
+        changed = true;
+      }
+    }
+    if (changed && repaint) renderScanFaces(lastScanResult);
+  }
+  function renderScanFeedback(message) {
+    if ($("scanFeedback")) $("scanFeedback").textContent = message;
+  }
+  function clearScanFaces() {
+    clearTimeout(overlayTimer);
+    overlayTimer = null;
+    lastScanResult = null;
+    analyzedPixels = null;
+    $("scanFaces").replaceChildren();
+    $("scanGuide").hidden = !scanActive;
+  }
+  function renderScanFaces(result) {
     const video = $("scanVideo");
-    if (!box || !video) return;
+    const layer = $("scanFaces");
+    if (!scanActive || !video.videoWidth) { clearScanFaces(); return; }
     const camera = video.closest(".camera-box");
-    const face = result?.face_box;
-    if (
-      !scanTimer ||
-      !camera ||
-      !Array.isArray(face) ||
-      face.length !== 4 ||
-      !video.videoWidth
-    ) {
-      box.hidden = true;
-      return;
-    }
-    const [x, y, width, height] = face.map(Number);
-    if (
-      ![x, y, width, height].every(Number.isFinite) ||
-      width <= 0 ||
-      height <= 0
-    ) {
-      box.hidden = true;
-      return;
-    }
-    const scale = Math.max(
-      camera.clientWidth / video.videoWidth,
-      camera.clientHeight / video.videoHeight,
+    camera.style.aspectRatio = `${video.videoWidth} / ${video.videoHeight}`;
+    const sourceWidth = result?.frame_width || video.videoWidth;
+    const sourceHeight = result?.frame_height || video.videoHeight;
+    const scale = Math.min(
+      camera.clientWidth / sourceWidth,
+      camera.clientHeight / sourceHeight,
     );
-    const offsetX = (camera.clientWidth - video.videoWidth * scale) / 2;
-    const offsetY = (camera.clientHeight - video.videoHeight * scale) / 2;
-    // The displayed selfie video is mirrored, while the frame sent to the
-    // recognizer is not. Reflect the detected rectangle only for the overlay.
-    const left = camera.clientWidth - (offsetX + (x + width) * scale);
-    const top = offsetY + y * scale;
-    box.style.left = `${left}px`;
-    box.style.top = `${top}px`;
-    box.style.width = `${width * scale}px`;
-    box.style.height = `${height * scale}px`;
-    const recognized =
-      result.decision === "recognized" &&
-      result.attendance &&
-      result.full_name &&
-      result.student_code;
-    box.classList.toggle("recognized", Boolean(recognized));
-    box.classList.toggle(
-      "label-above",
-      top + height * scale + 70 > camera.clientHeight,
-    );
-    $("scanFaceLabel").hidden = !recognized;
-    $("scanFaceName").textContent = recognized ? result.full_name : "";
-    $("scanFaceCode").textContent = recognized ? result.student_code : "";
-    box.hidden = false;
+    const offsetX = (camera.clientWidth - sourceWidth * scale) / 2;
+    const offsetY = (camera.clientHeight - sourceHeight * scale) / 2;
+    const previous = new Map([...layer.children].map(box => [box.dataset.trackId, box]));
+    const visible = new Set();
+    const labels = [];
+    for (const face of result?.faces || []) {
+      if (!Array.isArray(face.face_box) || face.face_box.length !== 4) continue;
+      const [x, y, width, height] = face.face_box.map(Number);
+      if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) continue;
+      const trackId = String(face.track_id);
+      if (visible.has(trackId)) continue;
+      visible.add(trackId);
+      let box = previous.get(trackId);
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "scan-face-box";
+        box.dataset.trackId = trackId;
+        const label = document.createElement("div");
+        label.className = "scan-face-label";
+        const name = document.createElement("strong"), code = document.createElement("span");
+        name.className = "scan-face-name";
+        code.className = "scan-face-code";
+        label.append(name, code);
+        box.append(label);
+        layer.append(box);
+      }
+      // Preview pixels are mirrored; source coordinates and the API are not.
+      const left = camera.clientWidth - (offsetX + (x + width) * scale);
+      const top = offsetY + y * scale;
+      Object.assign(box.style, { left: `${left}px`, top: `${top}px`, width: `${width * scale}px`, height: `${height * scale}px` });
+      const recognized = face.decision === "recognized" && face.attendance && face.full_name && face.live_valid !== false;
+      box.classList.toggle("recognized", Boolean(recognized));
+      const label = box.querySelector(".scan-face-label");
+      box.querySelector(".scan-face-name").textContent = recognized ? face.full_name
+        : face.decision === "pending" && face.confirmation_hits > 0
+          ? `Đang xác nhận ${face.confirmation_hits}/${face.confirmation_required}` : "Đang nhận diện";
+      box.querySelector(".scan-face-code").textContent = recognized ? face.student_code || "Đã điểm danh" : "Giữ mặt rõ trong camera";
+      box.title = face.message || "";
+      label.title = recognized ? face.full_name : face.message || "";
+      labels.push({ box, label, left, top, width: width * scale, center: left + width * scale / 2 });
+    }
+    for (const [trackId, box] of previous) if (!visible.has(trackId)) box.remove();
+    // Reserve a separate horizontal slot for each label, including narrow phones.
+    labels.sort((a, b) => a.center - b.center);
+    labels.forEach((item, index) => {
+      const slotLeft = index ? (labels[index - 1].center + item.center) / 2 + 3 : 8;
+      const slotRight = index + 1 < labels.length ? (item.center + labels[index + 1].center) / 2 - 3 : camera.clientWidth - 8;
+      const available = Math.max(1, slotRight - slotLeft);
+      item.label.style.minWidth = `${Math.min(84, available)}px`;
+      item.label.style.maxWidth = `${Math.min(available, Math.max(96, item.width + 24), 220)}px`;
+      item.box.classList.toggle("label-inside", item.top < item.label.offsetHeight + 6);
+      item.label.style.left = `${Math.max(slotLeft, Math.min(item.left, slotRight - item.label.offsetWidth)) - item.left}px`;
+    });
+    $("scanGuide").hidden = visible.size > 0;
   }
   function stopScan() {
-    if (scanTimer) clearInterval(scanTimer);
+    clearTimeout(scanTimer);
     scanTimer = null;
-    scanChallenge = null;
+    scanActive = false;
     scanEpoch += 1;
-    lastScanResult = null;
-    if ($("scanFaceBox")) $("scanFaceBox").hidden = true;
+    scanAbort?.abort();
+    scanAbort = null;
+    clearInterval(motionTimer);
+    motionTimer = null;
+    scanBusy = false;
+    clearScanFaces();
     if ($("scanToggle")) $("scanToggle").textContent = "Bắt đầu quét";
     if ($("scanBadge")) {
       $("scanBadge").textContent = "Đã dừng";
       $("scanBadge").className = "badge pending";
     }
-  }
-  function finishScan(result) {
-    stopScan();
-    $("scanToggle").textContent = "Quét người tiếp theo";
-    $("scanBadge").textContent = "Đã điểm danh";
-    $("scanBadge").className = "badge present";
-    renderLiveness({status: "passed"}, `${result.student_code} · ${result.full_name}: ${result.message}. Bấm “Quét người tiếp theo” khi sẵn sàng.`);
-    $("livenessTitle").textContent = "Đã ghi nhận điểm danh";
   }
   function renderBoard(board) {
     latestBoard = board;
@@ -780,13 +964,21 @@
   }
   async function refreshBoard() {
     if (!activeSession) return;
+    const sessionId = activeSession.session_id;
     const board = await api(
-      `/sessions/${activeSession.session_id}/attendance-board`,
+      `/sessions/${sessionId}/attendance-board`,
     );
-    renderBoard(board);
+    if (activeSession?.session_id === sessionId) renderBoard(board);
+  }
+  function refreshStreamBoard(force = false) {
+    if (boardRefreshBusy || (!force && performance.now() - lastBoardRefresh < 3000)) return;
+    boardRefreshBusy = true;
+    lastBoardRefresh = performance.now();
+    refreshBoard().catch(() => {}).finally(() => { boardRefreshBusy = false; });
   }
   async function chooseSession(id) {
     stopScan();
+    loggedAttendances.clear();
     const items = await getOpenSessions();
     activeSession = items.find((x) => x.session_id === Number(id)) || null;
     if (!activeSession) {
@@ -806,17 +998,33 @@
     history.replaceState(null, "", `/demo/attendance?session=${id}`);
   }
   async function scanOnce() {
-    if (scanBusy || !activeSession || !scanStream || !scanTimer) return;
+    if (!scanActive || scanBusy || !activeSession || !scanStream) return;
+    if (document.hidden) {
+      clearScanFaces();
+      scanTimer = setTimeout(scanOnce, 500);
+      return;
+    }
+    const video = $("scanVideo");
+    if (!scanStream.getVideoTracks().some(track => track.readyState === "live")) {
+      stopScan();
+      scanStream = null;
+      renderScanFeedback("Camera đã ngắt kết nối. Vui lòng bật lại camera để tiếp tục.");
+      return;
+    }
+    if (video.readyState < 2 || video.currentTime === lastScanVideoTime) {
+      scanTimer = setTimeout(scanOnce, 200);
+      return;
+    }
+    lastScanVideoTime = video.currentTime;
     scanBusy = true;
     const sessionId = activeSession.session_id;
     const epoch = scanEpoch;
+    const frameId = scanFrameId++;
+    const controller = new AbortController();
+    scanAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    let delay = 100;
     try {
-      if (!scanChallenge) {
-        const challenge = await json("POST", `/sessions/${sessionId}/liveness-challenge`, {});
-        if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
-        scanChallenge = challenge;
-        renderLiveness(challenge);
-      }
       const blob = await frameBlob($("scanVideo"), $("scanCanvas"));
       if (!blob) throw new Error("Không chụp được khung hình camera.");
       const base64 = await new Promise((resolve, reject) => {
@@ -825,64 +1033,67 @@
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
-      if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
-      const result = await json("POST", `/sessions/${sessionId}/scan-frame`, {
+      if (!scanActive || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
+      const result = await json("POST", `/sessions/${sessionId}/scan-stream`, {
         camera_id: "browser-camera",
+        stream_id: scanStreamId,
+        frame_id: frameId,
         image_base64: base64,
-        idempotency_key: crypto.randomUUID(),
-        challenge_id: scanChallenge.challenge_id,
-        step_token: scanChallenge.step_token,
-        sequence: scanChallenge.sequence,
-      });
-      if (!scanTimer || scanEpoch !== epoch || activeSession?.session_id !== sessionId) return;
-      if (result.liveness) {
-        renderLiveness(result.liveness, result.message);
-        scanChallenge = result.liveness.status === "pending" ? result.liveness : null;
-      }
+      }, { signal: controller.signal });
+      if (!scanActive || scanEpoch !== epoch || activeSession?.session_id !== sessionId || result.frame_id !== frameId) return;
+      scanErrors = 0;
+      delay = Math.max(50, Math.min(1000, result.next_frame_delay_ms || 100));
+      renderScanFeedback(result.message);
       lastScanResult = result;
-      renderScanFace(result);
-      const message =
-        result.decision === "recognized" && result.attendance
-          ? `${result.student_code} · ${result.full_name}: ${result.message}`
-          : result.message;
+      analyzedPixels = streamPixels($("scanCanvas"));
+      auditLiveFaces(false);
+      renderScanFaces(result);
+      clearTimeout(overlayTimer);
+      // Discard old names/boxes when inference/network pauses; never cache identity on live pixels.
+      overlayTimer = setTimeout(clearScanFaces, 1500);
+      $("scanBadge").textContent = `Đang quét · ${(result.faces || []).length} khuôn mặt`;
+      $("scanBadge").className = "badge open";
       const log = $("scanLog");
-      if (log.querySelector(".muted")) log.innerHTML = "";
-      log.insertAdjacentHTML(
-        "afterbegin",
-        `<li>${esc(message)}<time>${new Date().toLocaleTimeString("vi-VN")}</time></li>`,
-      );
-      while (log.children.length > 8) log.lastElementChild.remove();
-      if (result.decision === "recognized" && result.attendance) {
-        finishScan(result);
-        try {
-          await refreshBoard();
-        } catch (_) {
-          notify("Điểm danh đã lưu; chưa tải lại được danh sách. Bạn có thể bấm làm mới.", "warn");
-        }
+      let recorded = false;
+      for (const face of result.faces || []) {
+        if (face.decision !== "recognized" || !face.attendance) continue;
+        const key = `${sessionId}:${face.attendance.id}`;
+        if (loggedAttendances.has(key)) continue;
+        loggedAttendances.add(key);
+        recorded = true;
+        if (log.querySelector(".muted")) log.innerHTML = "";
+        const message = `${face.student_code} · ${face.full_name}: ${face.message}`;
+        log.insertAdjacentHTML("afterbegin", `<li>${esc(message)}<time>${new Date().toLocaleTimeString("vi-VN")}</time></li>`);
       }
+      while (log.children.length > 12) log.lastElementChild.remove();
+      refreshStreamBoard(recorded);
     } catch (error) {
-      stopScan();
-      notify(error.message, "error");
+      if (!scanActive || scanEpoch !== epoch) return;
+      clearScanFaces();
+      if ([401, 403, 404].includes(error.status) || error.message === "Session is not open") {
+        stopScan();
+        notify(error.message, "error");
+      } else {
+        scanErrors += 1;
+        delay = Math.min(5000, 500 * 2 ** Math.min(scanErrors, 4));
+        $("scanBadge").textContent = "Đang kết nối lại";
+        renderScanFeedback("Tạm thời chưa xử lý được khung hình. Camera vẫn chạy và hệ thống đang tự thử lại.");
+      }
     } finally {
-      scanBusy = false;
+      clearTimeout(timeout);
+      if (scanEpoch === epoch) {
+        scanBusy = false;
+        scanAbort = null;
+        if (scanActive) scanTimer = setTimeout(scanOnce, delay);
+      }
     }
   }
   async function initAttendance() {
-    try {
-      scanPolicy = await api("/face-analysis/status");
-    } catch (_) {
-      scanPolicy = { web_liveness_required: true, web_liveness_ready: false };
-    }
-    if (scanPolicy.web_liveness_required && !scanPolicy.web_liveness_ready) {
-      renderLiveness({status: "unavailable"}, scanPolicy.web_liveness_message || "Chống giả mạo chưa sẵn sàng. Liên hệ quản trị viên để kiểm tra engine Face ID và model PAD.");
-    } else if (scanPolicy.web_liveness_required) {
-      renderLiveness({status: "pending"}, "Giữ mặt trong khung, quay đầu chậm và nhẹ theo hướng dẫn rồi trở về nhìn thẳng. Không cần quay ngang hẳn.");
-    } else {
-      renderLiveness({status: "off"}, "Chế độ tương thích: thử thách chuyển động đang tắt.");
-    }
+    renderScanFeedback("Quét liên tục nhiều khuôn mặt. Khung xanh là đã điểm danh; khung vàng tiếp tục chờ.");
     window.addEventListener("resize", () => {
-      if (lastScanResult) renderScanFace(lastScanResult);
+      if (scanActive) renderScanFaces(lastScanResult);
     });
+    document.addEventListener("visibilitychange", () => { if (document.hidden) clearScanFaces(); });
     const items = await getOpenSessions();
     $("activeSession").innerHTML =
       '<option value="">Chọn buổi điểm danh</option>' +
@@ -957,21 +1168,36 @@
     $("scanToggle").addEventListener(
       "click",
       run(async () => {
-        if (scanTimer) {
+        if (scanActive) {
           stopScan();
           return;
         }
         if (!activeSession)
           throw new Error("Chọn buổi điểm danh trước khi quét.");
-        if (scanPolicy?.web_liveness_required && !scanPolicy.web_liveness_ready)
-          throw new Error("Chức năng chống giả mạo chưa sẵn sàng. Vui lòng liên hệ quản trị viên.");
-        if (!scanStream) scanStream = await openCamera("scanVideo");
-        renderLiveness({status: "pending"}, "Đang bắt đầu lượt quét mới. Nhìn thẳng và giữ mặt trong khung.");
-        scanTimer = setInterval(scanOnce, 700);
-        scanOnce();
-        $("scanToggle").textContent = "Dừng quét";
-        $("scanBadge").textContent = "Đang quét";
-        $("scanBadge").className = "badge open";
+        if (scanStarting) return;
+        scanStarting = true;
+        $("scanToggle").disabled = true;
+        const epoch = scanEpoch, sessionId = activeSession.session_id;
+        try {
+          if (!scanStream) scanStream = await openCamera("scanVideo");
+          if (epoch !== scanEpoch || activeSession?.session_id !== sessionId) return;
+          stopScan();
+          scanActive = true;
+          scanStreamId = crypto.randomUUID();
+          scanFrameId = 0;
+          lastScanVideoTime = -1;
+          scanErrors = 0;
+          renderScanFeedback("Đang nhận diện nhiều khuôn mặt. Giữ mặt rõ cho đến khi khung chuyển xanh.");
+          renderScanFaces(null);
+          motionTimer = setInterval(auditLiveFaces, 120);
+          scanOnce();
+          $("scanToggle").textContent = "Dừng quét";
+          $("scanBadge").textContent = "Đang quét";
+          $("scanBadge").className = "badge open";
+        } finally {
+          scanStarting = false;
+          $("scanToggle").disabled = false;
+        }
       }),
     );
     $("refreshBoard").addEventListener("click", run(refreshBoard));

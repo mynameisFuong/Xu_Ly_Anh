@@ -89,45 +89,26 @@ Neu ban dang dung Python cua MSYS va pip phai build `pydantic-core` hoac OpenCV 
 
 ## Test Demo Camera
 
-### Liveness web và camera nghiêng
+### Nhận diện và tiền xử lý ảnh
 
-Web hiện yêu cầu **PAD + thử thách ngẫu nhiên từ server** trước khi ghi điểm danh.
-Cài và bật theo [FACE_ANALYSIS.md](docs/FACE_ANALYSIS.md#bật-liveness-web-trên-windows-python-313-x64):
+Liveness/PAD và thử thách quay đầu đã được gỡ theo yêu cầu. Web/desktop gửi ảnh
+trực tiếp để nhận diện; đăng ký mẫu vẫn giữ đủ năm góc. Không cần model PAD hoặc
+ONNX Runtime để điểm danh. Hệ thống hiện không kiểm chứng chống ảnh in/video.
 
-```powershell
-python -m pip install -r requirements-liveness.txt
-python scripts/download_liveness_models.py
-```
-
-Trong `.env`, chọn `LIVENESS_BACKEND=minifasnet`, `LIVENESS_MODE=enforce`,
-`LIVENESS_MODEL_DIR=./storage/pad-models/minifasnet-v1`, `WEB_LIVENESS_REQUIRED=true`.
-Chỉ cho thử local với trọng số pretrained chưa đánh giá: `LIVENESS_ALLOW_PRETRAINED=true`.
-Khởi động lại backend sau khi đổi cấu hình. Trên máy đã tạo `.venv313`, dùng:
-
-```powershell
-.\.venv313\Scripts\python.exe -m uvicorn backend.app.main:app --reload
-```
-
-Nếu terminal IDE giữ biến môi trường cũ (ví dụ file `.env` là enforce nhưng API
-status lại báo off), dùng launcher local đọc lại `.env` hiện tại:
+Trên máy đã có môi trường Python 3.13, chạy:
 
 ```powershell
 .\.venv313\Scripts\python.exe scripts/run_web.py --reload
 ```
 
-Launcher local ưu tiên `.env` và đặt đúng thư mục dự án. Dừng backend cũ bằng
-Ctrl+C trước khi chạy; chỉ mở một backend trên cổng 8000. Quy tắc ưu tiên biến môi
-trường khi triển khai trực tiếp bằng Uvicorn vẫn được giữ nguyên.
+Dừng backend cũ trước khi chạy lại và tải lại trang web. Launcher local đọc lại
+.env hiện tại; các khóa LIVENESS_* và WEB_LIVENESS_* cũ được bỏ qua.
 
-`PREPROCESSING_MODE=enforce` bật tìm hướng camera/roll, căn mắt và CLAHE. Cần quét
-lại đủ 5 góc cho profile mới; mẫu legacy được giữ và không tự trộn. Camera nghiêng
-vừa được hỗ trợ, mặt quay quá xa/che khuất vẫn cần người dùng điều chỉnh.
-
-Vào **Điểm danh**, bật camera, bắt đầu quét và quay đầu theo chỉ dẫn rồi trở về
-nhìn thẳng. Không dùng ảnh in/video để đăng ký hoặc xác minh. Nếu thiếu model/engine,
-UI báo chưa sẵn sàng và không tự ghi điểm danh; quy trình thủ công vẫn dùng được.
-Đây là chống giả mạo RGB nhiều lớp; chưa có báo cáo thực địa chứng minh độ chính xác
-và không bảo đảm chống mọi video/deepfake/chèn camera ảo. Xem API trong [docs/API.md](docs/API.md).
+PREPROCESSING_MODE=enforce bật tìm hướng/roll, căn mắt và CLAHE. Chỉ khi đổi
+profile preprocessing mới cần đăng ký lại đủ năm góc cùng phiên bản; việc gỡ
+liveness lần này không thay profile hoặc embedding hiện có. Xem
+[hướng dẫn pipeline](docs/FACE_ANALYSIS.md), [API](docs/API.md) và
+[kế hoạch nâng cấp học thuật](docs/PREPROCESSING_UPGRADE_PLAN.md).
 
 ```powershell
 pip install -r requirements-camera.txt
@@ -203,11 +184,12 @@ X-Camera-Token: change-me-camera-token
 pytest
 ```
 
-Tiền xử lý ảnh và PAD có chế độ `off/shadow/enforce`. Có baseline HOG/SVM + DFT tự
-huấn luyện và ensemble MiniFASNet ONNX tải riêng; web mặc định yêu cầu PAD sẵn sàng
-cùng thử thách server. Xem [hướng dẫn tích hợp và đánh giá](docs/FACE_ANALYSIS.md).
-Chưa kèm model PAD đã được đánh giá thực địa.
-Để chạy cả kiểm thử HTTP mới, cài `pip install -r requirements-dev.txt` rồi chạy `pytest`.
+Tiền xử lý ảnh đã có profile `pre-v2`: chuẩn hóa hướng, kiểm tra chất lượng pixel
+gốc, gamma/CLAHE theo vùng mặt và lọc nhiễu có điều kiện. Giữ nguyên trọng số dlib
+và ngưỡng nhận diện. Profile `pre-v1` và mẫu cũ vẫn hoạt động; mặc định đo đối chiếu
+v2 trên 10% lượt khi v1 đang enforce. Xem [hướng dẫn benchmark và chuyển profile](docs/PREPROCESSING_BENCHMARK.md)
+và [kế hoạch/trạng thái triển khai](docs/PREPROCESSING_UPGRADE_PLAN.md).
+Cài requirements-dev.txt để chạy kiểm thử HTTP và pipeline.
 
 Nếu quay đầu hay báo không thấy mặt, có thể bật detector hỗ trợ YuNet (CPU,
 không thay model nhận dạng dlib):
@@ -224,10 +206,12 @@ chỉ hỗ trợ tìm mặt, không thay ngưỡng nhận dạng hoặc chống 
 đã nhận mặt vẫn giữ box/profile cũ nên chỉ bật detector không buộc đăng ký lại.
 Nếu đổi cấu hình căn mắt/CLAHE/mirror thì vẫn cần đăng ký lại theo profile mới.
 
-Khi quét, quay chậm khoảng 18° trái/phải hoặc 12° lên/xuống theo hướng dẫn,
-không quay ngang hẳn. Mất mặt/nhòe thoáng qua không xóa các bước đã hoàn thành;
-bước hiện tại phải giữ lại đủ thời gian bằng các frame mới. Mất mặt quá 5 giây,
-phát hiện spoof, nhiều người hoặc đổi người thì thử thách vẫn bị hủy.
+Khi điểm danh, nhiều người có thể cùng đứng trước camera. Quét tiếp tục tự động
+sau khi một người được ghi nhận; khung xanh kèm tên/MSSV là đã lưu điểm danh,
+khung vàng tiếp tục chờ. Chỉ bước đăng ký mẫu mới yêu cầu đúng một khuôn mặt.
+Xem [hướng dẫn stream nhiều mặt](docs/STREAM_RECOGNITION.md).
+Ảnh mờ/tối hoặc profile không phù hợp
+vẫn bị từ chối; điểm danh thủ công tiếp tục hoạt động.
 
 Kiểm tra lint: `python -m ruff check .` (hoặc `make lint`). Để kiểm tra giao diện
 camera bằng Chrome và webcam tổng hợp, không dùng camera thật:
@@ -237,10 +221,9 @@ python -m pip install -r requirements-browser.txt
 python -m pytest -q tests/test_web_ui.py --run-browser
 ```
 
-`make test` chạy toàn bộ unit/integration và bỏ qua nhóm Chrome khi không có
-`--run-browser`; `make test-browser` chạy riêng nhóm này. Chúng không đo độ chính
-xác PAD với ảnh in/video thực tế. Dùng `scripts/evaluate_liveness.py` với dữ liệu
-tách người như hướng dẫn FACE_ANALYSIS để đánh giá tiếp.
+`make test` chạy unit/integration và bỏ qua Chrome khi không có --run-browser;
+`make test-browser` chạy riêng nhóm giao diện. Kiểm thử tổng hợp không chứng minh
+accuracy nhận diện thực tế; cần benchmark theo người/phiên/camera như kế hoạch.
 
 ## Luu Y Bao Mat
 

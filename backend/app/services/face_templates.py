@@ -17,10 +17,9 @@ def embedding_to_bytes(embedding) -> bytes:
 
 def normalize_portrait_4x6(image_bytes: bytes, recognizer) -> bytes:
     import cv2
-    import numpy as np
+    from ai_pipeline.preprocessing import decode_bgr_image
 
-    image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-    frame = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+    frame = decode_bgr_image(image_bytes)
     if frame is None:
         return image_bytes
 
@@ -134,36 +133,23 @@ def build_default_recognizer():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Face recognition dependencies are not installed. Install requirements-camera.txt.",
         ) from exc
-    from ai_pipeline.preprocessing import PreprocessingOptions
-
     settings = get_settings()
-    options = PreprocessingOptions(
-        mode=settings.preprocessing_mode,
-        align_eyes=settings.preprocessing_align_eyes,
-        normalize_lighting=settings.preprocessing_normalize_lighting,
-        search_rotations=settings.preprocessing_search_rotations,
-        search_rolls=settings.preprocessing_search_rolls,
-        mirror_input=settings.preprocessing_mirror_input,
-        max_roll_degrees=settings.preprocessing_max_roll_degrees,
-    )
-    liveness = None
-    if settings.liveness_mode != "off":
-        if settings.liveness_backend == "minifasnet":
-            from ai_pipeline.minifasnet import load_minifasnet_detector
-
-            liveness = load_minifasnet_detector(
-                str(settings.liveness_model_dir) if settings.liveness_model_dir else "storage/pad-models/minifasnet-v1",
-                settings.liveness_live_threshold, settings.liveness_allow_pretrained,
-            )
-        else:
-            from ai_pipeline.liveness import load_liveness_detector
-
-            liveness = load_liveness_detector(str(settings.liveness_model_dir) if settings.liveness_model_dir else None)
+    options = build_preprocessing_options(settings)
     from ai_pipeline.detection import FaceDetectionOptions
 
     detection = FaceDetectionOptions(
         backend=settings.face_detection_backend, model_path=settings.face_detection_model_path,
         score_threshold=settings.face_detection_score_threshold, max_side=settings.face_detection_max_side,
     )
-    return FaceRecognizer(preprocessing=options, liveness=liveness, liveness_mode=settings.liveness_mode,
-                          detection=detection)
+    return FaceRecognizer(preprocessing=options, detection=detection)
+
+
+def build_preprocessing_options(settings=None):
+    """Single settings adapter used by runtime and rollout/benchmark tooling."""
+    from ai_pipeline.preprocessing import PreprocessingOptions
+
+    settings = settings or get_settings()
+    return PreprocessingOptions(**{
+        name: getattr(settings, "preprocessing_" + name)
+        for name in PreprocessingOptions.__dataclass_fields__
+    })

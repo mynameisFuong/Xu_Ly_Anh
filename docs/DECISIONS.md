@@ -1,3 +1,15 @@
+# Cập nhật ngày 30/10/2026: bỏ liveness, tập trung preprocessing
+
+Liveness/PAD, model loader, thử thách web, schema và công cụ huấn luyện PAD đã
+được gỡ theo yêu cầu. Enrollment năm góc, quality gate, template version và
+xác nhận nhiều frame của worker được giữ. Các biến môi trường liveness cũ được
+bỏ qua để không chặn khởi động. Thuật toán preprocessing hiện hành chưa đổi.
+
+Kế hoạch mới: [PREPROCESSING_UPGRADE_PLAN.md](PREPROCESSING_UPGRADE_PLAN.md).
+Các mục bên dưới là lịch sử quyết định, không mô tả đầy đủ runtime hiện tại.
+
+---
+
 # Quyết định kỹ thuật
 
 ## Giữ kiến trúc local-first cho bản demo
