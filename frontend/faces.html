@@ -43,7 +43,7 @@
                 <label for="faceClass">Lớp dùng để điểm danh</label>
                 <div class="actions">
                   <select id="faceClass"><option value="">Chọn lớp học</option></select>
-                  <button id="addFaceClass" class="btn secondary" type="button">Ghi danh vào lớp</button>
+                  <button id="addFaceClass" class="btn secondary" type="button" disabled>Ghi danh vào lớp</button>
                 </div>
                 <small id="faceClassStatus" class="hint" role="status">Chọn sinh viên để xem lớp học đã ghi danh.</small>
               </div>
@@ -65,9 +65,10 @@
                 </div>
               </div>
               <canvas id="faceCanvas" width="640" height="480" hidden></canvas>
+              <p id="enrollRequestStatus" class="hint" role="status"></p>
               <div class="actions" style="margin-top: 15px">
-                <button id="faceCamera" class="btn secondary">Bật camera</button
-                ><button id="captureFace" class="btn">
+                <button id="faceCamera" class="btn secondary" data-initial-control disabled>Bật camera</button
+                ><button id="captureFace" class="btn" data-initial-control disabled>
                   Bắt đầu quét 5 góc
                 </button>
               </div>

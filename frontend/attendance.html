@@ -15,7 +15,7 @@
             <div>
               <span class="eyebrow">Điểm danh trực tiếp</span>
               <h1>Điểm danh lớp học</h1>
-              <p class="lede">
+              <p class="lede" id="attendanceIntro">
                 Chọn buổi đang mở, bật camera và theo dõi kết quả theo thời gian
                 thực.
               </p>
@@ -27,7 +27,7 @@
           <div class="card card-pad" style="margin-bottom: 20px">
             <div class="grid cols-3" style="align-items: end">
               <div class="field" style="margin: 0">
-                <label for="activeSession">Buổi đang mở</label
+                <label for="activeSession">Buổi điểm danh</label
                 ><select id="activeSession">
                   <option value="">Chọn buổi điểm danh</option>
                 </select>
@@ -47,8 +47,8 @@
               ><button class="btn danger" id="closeSession">Đóng buổi</button>
             </div>
           </div>
-          <div class="grid split">
-            <section class="card card-pad">
+          <div class="grid split" id="attendanceLayout">
+            <section class="card card-pad" id="scanCameraCard">
               <div class="card-head">
                 <div>
                   <h2>Camera nhận diện</h2>
@@ -79,7 +79,7 @@
                   <p id="sessionSubtitle">Chọn buổi để xem thống kê.</p>
                 </div>
               </div>
-              <div class="grid cols-2" style="gap: 10px">
+              <div class="grid cols-2" id="attendanceStats" style="gap: 10px">
                 <div
                   class="metric card"
                   style="box-shadow: none; padding: 15px"
@@ -109,10 +109,13 @@
                   ><strong id="countAbsent" class="value">—</strong>
                 </div>
               </div>
+              <p id="closedRosterHint" class="readiness-hint" hidden></p>
+              <div id="scanActivity">
               <div class="section-title"><h2>Hoạt động gần đây</h2></div>
               <ul id="scanLog" class="scan-log">
                 <li class="muted">Chưa có lượt quét trong phiên này.</li>
               </ul>
+              </div>
             </aside>
           </div>
           <div class="section-title">
@@ -131,7 +134,7 @@
               <thead>
                 <tr>
                   <th>MSSV / Họ tên</th>
-                  <th>Lớp</th>
+                  <th>Lớp hành chính</th>
                   <th>Thời gian</th>
                   <th>Trạng thái</th>
                   <th>Ghi chú</th>
@@ -150,6 +153,7 @@
         </div>
         <dialog id="manualDialog" class="manual-dialog">
           <form id="manualForm">
+            <div class="notice error" data-dialog-notice hidden role="alert"></div>
             <span class="eyebrow">Điều chỉnh thủ công</span>
             <h2 id="manualStudent"></h2>
             <input id="manualStudentId" type="hidden" />

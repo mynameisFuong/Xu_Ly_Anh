@@ -63,7 +63,7 @@
                   <label for="expectedStart">Giờ vào học *</label
                   ><input id="expectedStart" type="datetime-local" required />
                 </div>
-                <button class="btn" type="submit">Mở buổi điểm danh</button>
+                <button class="btn" type="submit" data-initial-control disabled>Mở buổi điểm danh</button>
               </form>
             </section>
             <aside class="card card-pad">
@@ -93,7 +93,7 @@
           </div>
           <div class="section-title">
             <h2>Buổi đang mở</h2>
-            <button class="btn secondary small" id="refreshSessions">
+            <button class="btn secondary small" id="refreshSessions" data-initial-control disabled>
               Tải lại
             </button>
           </div>
@@ -110,6 +110,14 @@
                 </tr>
               </thead>
               <tbody id="sessionsTable"></tbody>
+            </table>
+          </div>
+          <div class="section-title"><h2>Buổi đã đóng</h2></div>
+          <p class="hint">Hiển thị các buổi đã đóng trong 100 buổi gần nhất. Mở kết quả để xem bảng, xuất CSV hoặc điều chỉnh thủ công có lý do.</p>
+          <div class="card table-wrap">
+            <table>
+              <thead><tr><th>Mã buổi</th><th>Lớp học</th><th>Giờ vào học</th><th>Đúng giờ / Trễ / Vắng</th><th>Thao tác</th></tr></thead>
+              <tbody id="sessionHistory"></tbody>
             </table>
           </div>
         </div>

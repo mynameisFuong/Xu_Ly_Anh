@@ -2,6 +2,8 @@
 
 - Giữ mô hình điểm danh lớp học: student, class và class session.
 - Bản demo chạy local trên Windows, SQLite và một camera cho mỗi máy trạm.
+- Web hiện chỉ cho admin đăng nhập. Quyền teacher/user có ở API/client tương ứng;
+  chưa có giao diện web hoàn chỉnh cho mọi vai trò hoặc trang CRUD lớp/tài khoản.
 - Web/desktop dùng bearer token có hạn; camera worker dùng camera token riêng.
 - Engine Face ID là ageitgey/face_recognition + dlib ResNet 128D; OpenCV histogram
   là fallback demo và không hỗ trợ đăng ký đa góc.
@@ -15,3 +17,9 @@
   process phải có chiến lược định tuyến/store chung nếu cần duy trì chuỗi xác nhận.
 - V3 là profile mặc định cho cả đăng ký và nhận diện (`enforce`). V1/v2 còn trong
   code để đối chiếu học thuật nhưng không dùng chung vector với gallery v3.
+- Model ResNet được dùng pretrained; năm góc là template, không là tập train model mới.
+- Lớp hành chính là nhãn; ghi danh ClassEnrollment mới quyết định gallery của lớp.
+- Bảng lịch sử dùng roster hiện tại, chưa có snapshot; xóa mềm không xóa vật lý
+  ảnh/vector. Xem giới hạn trong [DATA_MODEL](DATA_MODEL.md).
+- Chưa có số accuracy/FPS được nghiệm thu trên camera/người thật đủ lớn. Dữ liệu
+  seed và test tổng hợp chỉ chứng minh nghiệp vụ/logic, không thay thực nghiệm.

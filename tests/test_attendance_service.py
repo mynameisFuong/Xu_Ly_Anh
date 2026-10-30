@@ -331,7 +331,11 @@ def test_dashboard_and_session_history_reflect_operational_data():
     assert _attendance_request_read(db, session).student_count == 1
 
 
-def test_faceid_status_requires_all_five_distinct_poses():
+def test_faceid_status_requires_all_five_distinct_poses(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr("backend.app.api.build_default_recognizer",
+                        lambda: SimpleNamespace(model_version="test", supports_pose=True))
     db = build_db()
     teacher, student, _class = seed(db)
     for pose in ("front", "left", "right", "up"):
@@ -462,6 +466,39 @@ def test_face_readiness_uses_enrolled_consented_students_and_current_model(api_c
     student.consent_status = ConsentStatus.REVOKED.value
     db.commit()
     assert client.get(url).json()["ready"] == 0
+
+
+def test_face_summary_marks_old_profile_and_missing_engine_without_blocking_management(api_context, monkeypatch):
+    from fastapi import HTTPException
+
+    _, db, teacher, student, _, _, _, _ = api_context
+    add_pose_templates(db, student, version="old-model")
+    summary = list_students_with_faces(teacher, db)[0]
+    assert summary.face_status == "outdated" and not summary.enrollment_complete
+    assert summary.captured_pose_count == 0 and summary.face_template_count == 5
+    add_pose_templates(db, student)
+    assert list_students_with_faces(teacher, db)[0].face_status == "ready"
+
+    def unavailable():
+        raise HTTPException(503, "Missing optional dependencies")
+
+    monkeypatch.setattr("backend.app.api.build_default_recognizer", unavailable)
+    summary = list_students_with_faces(teacher, db)[0]
+    assert summary.student_code == student.student_code
+    assert summary.face_status == "engine_unavailable" and not summary.enrollment_complete
+
+
+def test_closed_session_details_remain_available_for_result_view(api_context):
+    client, db, teacher, _, _, session, _, _ = api_context
+    close_session(db, session_id=session.id, actor_user_id=teacher.id)
+    response = client.get(f"/sessions/{session.id}")
+    assert response.status_code == 200
+    assert response.json()["status"] == "closed"
+    assert response.json()["class_code"] == "C001"
+    assert client.put(f"/sessions/{session.id}/policy", json={
+        "expected_start_time": "2026-10-31T00:00:00Z", "late_grace_minutes": 5,
+    }).status_code == 409
+    assert client.get("/sessions/9999").status_code == 404
 
 
 def test_faceid_requires_class_enrollment_even_when_student_has_all_five_poses(api_context):

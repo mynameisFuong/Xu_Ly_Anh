@@ -26,8 +26,9 @@
   PBKDF2 có salt; SHA-256 cũ được nâng cấp khi đăng nhập thành công.
 - Giảng viên chỉ đọc/điều khiển lớp và phiên được giao. Tài khoản thiết bị cần
   quyền lớp riêng. Admin cấp/thu hồi bằng `PUT` / `DELETE
-  /classes/{class_id}/devices/{user_id}`. Seed demo cấp device01 vào IMG101;
-  không tự cấp quyền cho thiết bị với mọi lớp đang có.
+  /classes/{class_id}/devices/{user_id}`. Dữ liệu khởi tạo cơ bản có IMG101;
+  seed demo còn cấp device01 vào các lớp DEMO do seed quản lý, không tự cấp
+  quyền cho thiết bị với mọi lớp khác đang có.
 
 Đổi code không yêu cầu đăng ký lại khuôn mặt: trọng số và profile embedding
 hiện tại được giữ nguyên. Server tạo thêm bảng phiên đăng nhập và quyền lớp khi

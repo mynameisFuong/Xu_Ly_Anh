@@ -2,6 +2,8 @@
 > mô tả chấm công nhân viên và liveness; sản phẩm hiện là demo điểm danh sinh viên
 > và đã gỡ liveness. Xem [mô tả hệ thống hiện hành](docs/SYSTEM.md). Các chỉ dẫn
 > milestone, công nghệ và yêu cầu lịch sử bên dưới không tự thay đổi runtime.
+> Các mục tiêu FAR/FRR, SLA, 5.000 người/50 kiosk bên dưới chưa được chứng minh
+> bằng thực nghiệm của demo. PostgreSQL/Redis/MinIO/liveness không phải stack đang chạy.
 
 # Đặc tả xây dựng hệ thống điểm danh bằng FaceID
 

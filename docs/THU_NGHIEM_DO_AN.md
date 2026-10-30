@@ -15,6 +15,10 @@ trong bảng báo cáo và không đưa ảnh khuôn mặt lên Git.
 
 ## Đo nhận diện và tốc độ
 
+Trước khi đo điểm danh, đo riêng thời gian hoàn tất năm góc, số lần phải bắt đầu
+lại và người dùng có hiểu tiếng tít/hướng dẫn hay không. Ghi số người hoàn tất
+trên tổng số người thử, không chỉ chọn các lượt thuận lợi.
+
 Thử lần lượt một người, hai người và 3–4 người cùng khung hình. Với mỗi người,
 ghi thời điểm vào khung, thời điểm được ghi nhận hoặc kết thúc chờ, kết quả đúng,
 nhầm hay không nhận diện được. Thử thêm ánh sáng yếu, đeo kính và góc quay nhẹ;
@@ -33,12 +37,13 @@ và điều kiện đo để người đọc hiểu giới hạn của mẫu th�
 
 ## So sánh tiền xử lý
 
-Dùng cùng tập ảnh gốc, cùng ngưỡng và model, so sánh `legacy`, `v1`, `v2-adaptive`.
+Dùng cùng tập ảnh gốc, cùng ngưỡng và model, so sánh `legacy`, `v1`, `v2-adaptive`,
+`v3-adaptive` (phiên bản hiện hành).
 Tạo manifest theo [hướng dẫn benchmark](PREPROCESSING_BENCHMARK.md), chia ảnh
 đăng ký và kiểm tra khác phiên; dành tập test riêng nếu đủ người. Chạy:
 
 ```powershell
-.\.venv313\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition validation --profiles legacy v1 v2-adaptive --max-side 640 --output storage/recognition-benchmark/validation.json
+.\.venv\Scripts\python.exe scripts/benchmark_preprocessing.py storage/recognition-benchmark/manifest.json --partition validation --profiles legacy v1 v2-adaptive v3-adaptive --max-side 640 --output storage/recognition-benchmark/validation.json
 ```
 
 Đọc số probe nhận đúng/nhầm/bị từ chối, lý do từ chối và thời gian xử lý theo
@@ -51,6 +56,10 @@ chạy tiếp theo hướng dẫn benchmark với calibration validation. Không
 đang dùng nếu chưa kiểm tra tính tương thích mẫu Face ID đã đăng ký.
 
 ## Kiểm thử người dùng
+
+Kiểm tra thêm xem lại buổi đã đóng, tải CSV, lỗi camera bị từ chối quyền, bỏ chọn
+buổi không còn thống kê cũ, mẫu khác profile được báo cần quét lại. Thao tác theo
+[USER_GUIDE](USER_GUIDE.md); đối chiếu các ca tự động ở [EVALUATION](EVALUATION.md).
 
 Mời 2–3 người chưa tham gia phát triển tự làm theo hướng dẫn từ đăng nhập đến
 xuất báo cáo. Ghi bước bị vướng và thời gian hoàn thành; đặc biệt hỏi liệu họ

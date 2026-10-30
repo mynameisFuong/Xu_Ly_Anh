@@ -42,7 +42,8 @@ def browser_page(request):
 
 
 def serve_ui(page, *, recognized=False, recorded=True, transient_miss=False, unexpected=None, scene=None,
-             start_time="2026-10-29T13:00:00Z", readiness=None, policy_updates=None):
+             start_time="2026-10-29T13:00:00Z", readiness=None, policy_updates=None,
+             closed=False, manual_error=None):
     root = Path(__file__).resolve().parents[1] / "frontend"
     scans = []
 
@@ -57,8 +58,14 @@ def serve_ui(page, *, recognized=False, recorded=True, transient_miss=False, une
             route.fulfill(path=str(root / name), content_type="text/javascript" if name.endswith(".js") else "text/css")
             return
         if path == "/attendance-requests/open":
-            body = [{"session_id": 1, "class_code": "TEST01", "class_name": "Test Class",
-                     "expected_start_time": start_time, "late_grace_minutes": 5}]
+            body = [] if closed else [{"session_id": 1, "class_code": "TEST01", "class_name": "Test Class",
+                     "expected_start_time": start_time, "late_grace_minutes": 5, "status": "open"}]
+        elif path == "/sessions/1":
+            body = {"session_id": 1, "class_code": "TEST01", "class_name": "Test Class",
+                    "expected_start_time": start_time, "late_grace_minutes": 5, "status": "closed"}
+        elif path == "/sessions/1/attendance/1" and request.method == "PUT":
+            route.fulfill(status=409 if manual_error else 200, json={"detail": manual_error} if manual_error else {})
+            return
         elif path.endswith("/face-readiness"):
             body = readiness or {"ready": 1, "total": 1, "engine_ready": True}
         elif path.endswith("/policy") and request.method == "PUT":
@@ -132,6 +139,43 @@ def test_manual_controls_still_work_without_scanning(browser_page):
     expect(page.locator("#activeSession")).to_have_value("1")
     page.locator('[data-manual="1"]').click()
     expect(page.locator("#manualDialog")).to_be_visible()
+    assert scans == []
+
+
+def test_manual_error_is_visible_inside_dialog(browser_page):
+    page, expect = browser_page
+    serve_ui(page, manual_error="Không lưu được điều chỉnh, hãy thử lại.")
+    page.locator('[data-manual="1"]').click()
+    page.locator("#manualReason").fill("Kiểm tra trực tiếp")
+    page.locator('#manualForm button[type="submit"]').click()
+    expect(page.locator("#manualDialog [data-dialog-notice]")).to_contain_text("Không lưu được")
+    expect(page.locator("#manualDialog")).to_be_visible()
+    expect(page.locator('#manualForm button[type="submit"]')).to_be_enabled()
+
+
+def test_unselect_session_clears_previous_totals_and_disables_writes(browser_page):
+    page, expect = browser_page
+    serve_ui(page)
+    expect(page.locator("#countPending")).to_have_text("1")
+    page.locator("#activeSession").select_option("")
+    expect(page.locator("#countPending")).to_have_text("—")
+    expect(page.locator("#attendanceTable")).not_to_contain_text("TEST001")
+    expect(page.locator("#scanToggle")).to_be_disabled()
+    expect(page.locator("#exportCsv")).to_be_disabled()
+    assert page.url == "http://localhost/demo/attendance"
+
+
+def test_closed_session_can_be_reviewed_without_camera_or_policy_changes(browser_page):
+    page, expect = browser_page
+    scans = serve_ui(page, closed=True)
+    expect(page.locator("#sessionSubtitle")).to_contain_text("Đã đóng")
+    expect(page.locator("#scanCameraCard")).to_be_hidden()
+    expect(page.locator("#scanToggle")).to_be_disabled()
+    expect(page.locator("#savePolicy")).to_be_disabled()
+    expect(page.locator("#scanActivity")).to_be_hidden()
+    expect(page.locator("#closedRosterHint")).to_be_visible()
+    expect(page.locator("#exportCsv")).to_be_enabled()
+    expect(page.locator('[data-manual="1"]')).to_be_enabled()
     assert scans == []
 
 
@@ -528,6 +572,68 @@ def test_face_page_explains_class_scope_and_can_enroll_existing_faceid(browser_p
     expect(page.locator("#faceClassStatus")).to_contain_text("TEST01")
     expect(page.locator("#addFaceClass")).to_be_disabled()
     assert state["class_codes"] == ["TEST01"]
+
+
+def test_enrollment_camera_can_be_released_without_leaving_page(browser_page):
+    page, expect = browser_page
+    state = serve_enrollment(page)
+    start_enrollment(page, expect)
+    page.evaluate("window.enrollmentTrack = document.querySelector('#faceVideo').srcObject.getVideoTracks()[0]")
+    expect(page.locator("#faceCamera")).to_have_text("Tắt camera")
+    page.locator("#faceCamera").click()
+    expect(page.locator("#faceCamera")).to_have_text("Bật camera")
+    assert page.evaluate("window.enrollmentTrack.readyState") == "ended"
+    expect(page.locator("#enrollRequestStatus")).to_be_empty()
+    expect(page.locator("#captureFace")).to_have_text("Bắt đầu quét 5 góc")
+    before = len(state["scans"])
+    page.wait_for_timeout(1100)
+    assert len(state["scans"]) == before
+
+
+def test_camera_permission_error_gives_actionable_vietnamese_feedback(browser_page):
+    page, expect = browser_page
+    serve_enrollment(page)
+    page.evaluate("() => { navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('denied', 'NotAllowedError'); }; }")
+    page.locator("#faceCamera").click()
+    expect(page.locator("#notice")).to_contain_text("Cho phép camera trong trình duyệt")
+
+
+def test_sessions_page_exposes_closed_results_and_prevents_duplicate_submit(browser_page):
+    page, expect = browser_page
+    root = Path(__file__).resolve().parents[1] / "frontend"
+    pending = []
+
+    def handle(route):
+        request = route.request
+        path = request.url.split("localhost", 1)[1].split("?", 1)[0]
+        if path == "/demo/sessions":
+            route.fulfill(path=str(root / "sessions.html"), content_type="text/html")
+        elif path.startswith("/demo/assets/"):
+            name = path.rsplit("/", 1)[1]
+            route.fulfill(path=str(root / name), content_type="text/javascript" if name.endswith(".js") else "text/css")
+        elif path == "/classes":
+            route.fulfill(json=[{"id": 1, "code": "TEST01", "name": "Test Class"}])
+        elif path == "/attendance-requests/open":
+            route.fulfill(json=[])
+        elif path == "/sessions":
+            route.fulfill(json=[{"id": 9, "status": "closed", "class_code": "TEST01", "class_name": "Test Class",
+                                 "start_time": "2026-10-31T00:00:00Z", "present_count": 2,
+                                 "late_count": 1, "absent_count": 3}])
+        elif path == "/classes/1/sessions":
+            pending.append(route)
+        else:
+            route.fulfill(status=404)
+
+    page.route("http://localhost/**", handle)
+    page.goto("http://localhost/demo/sessions")
+    expect(page.locator("#sessionHistory a")).to_have_attribute("href", "/demo/attendance?session=9")
+    page.locator("#sessionClass").select_option("1")
+    page.locator('#sessionForm button[type="submit"]').click()
+    expect(page.locator('#sessionForm button[type="submit"]')).to_be_disabled()
+    page.evaluate("document.querySelector('#sessionForm').requestSubmit()")
+    assert len(pending) == 1
+    pending[0].fulfill(status=409, json={"detail": "Session is not open"})
+    expect(page.locator('#sessionForm button[type="submit"]')).to_be_enabled()
 
 
 def test_enrollment_repeats_short_beeps_and_stops_them_when_paused(browser_page):

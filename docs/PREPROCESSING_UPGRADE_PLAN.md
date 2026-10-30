@@ -29,6 +29,11 @@ Chi tiết triển khai tại [STREAM_RECOGNITION.md](STREAM_RECOGNITION.md).
 
 ## 1. Kết quả đọc mã nguồn
 
+Phần này là đánh giá **v1 tại lúc lập kế hoạch**, không phải mô tả nhược điểm
+còn nguyên ở v3. V3 hiện có ROI gamma/CLAHE có điều kiện, warp gộp ma trận,
+ngân sách detector và công cụ benchmark. Xem [IMAGE_PROCESSING](IMAGE_PROCESSING.md)
+và [EVALUATION](EVALUATION.md) để phân biệt đã triển khai và chưa đo thực địa.
+
 - [recognition.py](../ai_pipeline/recognition.py) giải mã bytes bằng OpenCV,
   dùng BGR uint8, chuyển RGB khi gọi dlib và trả embedding float32 128 chiều.
   Engine histogram 256 chiều là fallback demo, không đủ Face ID đa góc.
@@ -54,7 +59,7 @@ Chi tiết triển khai tại [STREAM_RECOGNITION.md](STREAM_RECOGNITION.md).
 2. Dlib đã tự tạo face chip căn chỉnh 150×150 với padding mặc định 0,25 trong
    compute_face_descriptor. Không mặc định bổ sung một lần căn chỉnh ngoài nữa.
    Nguồn: [mã nguồn dlib](https://github.com/davisking/dlib/blob/master/tools/python/src/face_recognition.cpp).
-3. CLAHE hiện chạy cả ảnh khi bật, không phân biệt mặt đủ sáng với mặt thiếu
+3. CLAHE ở v1 chạy cả ảnh khi bật, không phân biệt mặt đủ sáng với mặt thiếu
    tương phản. Việc ảnh nhìn rõ hơn không đồng nghĩa embedding chính xác hơn.
 4. Tìm nhiều hướng trên toàn khung có thể làm tăng mạnh p95 khi mất mặt.
 5. Phương sai Laplacian có thể tăng do nhiễu hoặc sharpening; phải đo ảnh nguồn,

@@ -345,6 +345,15 @@ def list_sessions(
     return [_session_summary(db, item) for item in sessions]
 
 
+@router.get("/sessions/{session_id}", response_model=AttendanceRequestRead)
+def session_details(session_id: int, _user: User = Depends(require_user_or_admin),
+                    db: Session = Depends(get_db)) -> AttendanceRequestRead:
+    session = db.get(ClassSession, session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    return _attendance_request_read(db, session)
+
+
 def login(username: str, password: str, db: Session = Depends(get_db)) -> dict[str, int | str]:
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not user.is_active or not verify_password(password, user.password_hash):
@@ -508,6 +517,12 @@ def list_students_with_faces(
     db: Session = Depends(get_db),
 ) -> list[StudentFaceSummary]:
     students = db.scalars(select(Student).where(Student.deleted_at.is_(None)).order_by(Student.student_code)).all()
+    try:
+        recognizer = build_default_recognizer()
+        current_version = recognizer.model_version if recognizer.supports_pose else None
+    except HTTPException:
+        # Missing optional face dependencies must not block student management.
+        current_version = None
     summaries: list[StudentFaceSummary] = []
     for student in students:
         class_codes = list(db.scalars(
@@ -524,7 +539,10 @@ def list_students_with_faces(
         for item in templates:
             if item.pose_label in {"front", "left", "right", "up", "down"}:
                 profiles.setdefault(item.model_version, set()).add(item.pose_label)
-        captured_poses = max(profiles.values(), key=len, default=set())
+        captured_poses = profiles.get(current_version, set())
+        face_status = ("engine_unavailable" if current_version is None else
+                       "ready" if len(captured_poses) == 5 else
+                       "outdated" if profiles and not captured_poses else "incomplete")
         summaries.append(
             StudentFaceSummary(
                 id=student.id,
@@ -536,6 +554,7 @@ def list_students_with_faces(
                 face_template_count=len(templates),
                 captured_pose_count=len(captured_poses),
                 enrollment_complete=len(captured_poses) == 5,
+                face_status=face_status,
                 latest_image_path=latest.image_path if latest is not None else None,
                 latest_image_url=f"/admin/face-templates/{latest.id}/image" if latest is not None else None,
             )
@@ -746,6 +765,8 @@ def update_session_policy(
     class_session = db.get(ClassSession, session_id)
     if class_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    if class_session.status != SessionStatus.OPEN.value:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not open")
     class_session.expected_start_time = payload.expected_start_time
     class_session.late_grace_minutes = payload.late_grace_minutes
     db.commit()

@@ -23,7 +23,9 @@ if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
 Mở `http://127.0.0.1:8000/demo`. Tài khoản mới do seed tạo: `admin/admin123`,
 `teacher/teacher123`, `device01/device123`. Nếu tài khoản đã tồn tại, seed giữ
-nguyên mật khẩu hiện có. Các mật khẩu này chỉ dành cho demo local.
+nguyên mật khẩu hiện có. Web hiện dành cho admin; các vai trò khác dùng API/client
+phù hợp. Các mật khẩu này chỉ dành cho demo local. Đổi cổng bằng
+`scripts/run_web.py --port 8765` thì mở `http://127.0.0.1:8765/demo`.
 
 Seed tạo dữ liệu giả lập có tiền tố `[DEMO]`/`DEMO`: ba lớp, 12 sinh viên, ba
 buổi đã đóng với trạng thái đúng/trễ/vắng giả lập và tối đa hai buổi đang mở.
@@ -65,7 +67,12 @@ nhưng API điểm danh bằng Face ID và đăng ký năm góc không dùng his
    xem cảnh báo số sinh viên đã có Face ID, bật camera và bắt đầu quét một lần.
    Vàng là đang chờ; xanh kèm tên là đã lưu. Người khác có thể tiếp tục vào khung.
 4. Xem bảng; điều chỉnh thủ công với lý do; đóng buổi để đánh dấu vắng những người
-   chưa có bản ghi. Giao diện web xuất CSV; API cũng có endpoint xuất XLSX.
+   chưa có bản ghi. Mục **Buổi đã đóng** cho xem lại, xuất CSV và điều chỉnh thủ
+   công; camera/chính sách giờ bị khóa. API cũng có endpoint xuất XLSX.
+
+Trang Face ID cho biết mẫu thuộc profile cũ cần quét lại. Nút **Tắt camera**
+giải phóng camera ngay tại trang đăng ký; **Dừng quét** chỉ hủy lượt đăng ký đang
+làm. Hướng dẫn chi tiết và xử lý lỗi ở [USER_GUIDE](docs/USER_GUIDE.md).
 
 Thời gian được lưu/trao đổi theo UTC và hiển thị theo múi giờ trình duyệt. Với
 buổi đã từng bị chỉnh bởi phiên bản cũ, kiểm tra lại giờ vào học trước khi demo.
@@ -110,6 +117,8 @@ thư mục dự án; khởi động lại sau khi chỉnh.
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m pip install -r requirements-browser.txt
 .\.venv\Scripts\python.exe -m pytest -q tests/test_web_ui.py --run-browser
+# Chạy cả UI nhập sinh viên và toàn bộ hồi quy:
+.\.venv\Scripts\python.exe -m pytest -q --run-browser
 ```
 
 Test browser dùng Chrome và webcam tổng hợp; không thay thế thử nghiệm người thật.
@@ -118,6 +127,10 @@ OpenAPI tại `http://127.0.0.1:8000/docs`. Có thể chạy desktop bằng
 
 ## Tài liệu hệ thống
 
+- [Danh mục tài liệu và căn cứ viết báo cáo](docs/README.md): thứ tự đọc, tài liệu
+  hiện hành/lịch sử và bằng chứng cần tự thu. Bộ tài liệu không phải báo cáo môn học.
+- [Hướng dẫn sử dụng](docs/USER_GUIDE.md), [mô hình dữ liệu](docs/DATA_MODEL.md),
+  [thuật toán xử lý ảnh](docs/IMAGE_PROCESSING.md), [kiểm chứng phần mềm/UX](docs/EVALUATION.md).
 - [Mô tả hệ thống hiện hành](docs/SYSTEM.md): phạm vi, kiến trúc, thuật toán,
   nghiệp vụ, dữ liệu, giới hạn và gợi ý dẫn chứng cho báo cáo.
 - [API](docs/API.md), [luồng stream nhiều mặt](docs/STREAM_RECOGNITION.md),

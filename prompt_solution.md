@@ -1,3 +1,9 @@
+> **Đề bài thiết kế lịch sử, không phải tài liệu chức năng đã nghiệm thu.**
+> Nội dung sau là đầu vào thiết kế trước đây; các yêu cầu thống kê, quản trị,
+> công nghệ hoặc chỉ tiêu chưa chắc đã triển khai. Mô tả phiên bản hiện hành ở
+> [docs/SYSTEM.md](docs/SYSTEM.md), danh mục căn cứ viết báo cáo ở
+> [docs/README.md](docs/README.md). Không dùng đề bài này thay cho kết quả thử nghiệm.
+
 Bạn hãy đóng vai một **AI Solution Architect kiêm người hướng dẫn kỹ thuật cho Junior AI Engineer**.
 
 Tôi là một junior đang xây dựng đồ án **“Hệ thống nhận diện khuôn mặt và điểm danh tự động”**. Hãy giúp tôi thiết kế kiến trúc hệ thống từ tổng quan đến chi tiết, có thể triển khai thực tế, thay vì chỉ liệt kê công nghệ.

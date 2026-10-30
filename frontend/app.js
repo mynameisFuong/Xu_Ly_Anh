@@ -50,6 +50,11 @@
   };
   const badge = (status) =>
     `<span class="badge ${esc(status)}">${statusLabels[status] || esc(status)}</span>`;
+  const faceStatus = (item) => item.face_status === "engine_unavailable"
+    ? '<span class="badge pending">Chưa có engine Face ID</span>'
+    : item.face_status === "outdated"
+      ? '<span class="badge late">Cần quét lại · mẫu cũ</span>'
+      : item.enrollment_complete ? '<span class="badge present">Hoàn tất</span>' : `${item.captured_pose_count}/5 góc`;
   // SQLite returns previously stored UTC datetimes without a timezone suffix.
   const serverDate = (value) => new Date(typeof value === "string" && !/(?:Z|[+-]\d\d:\d\d)$/i.test(value) ? `${value}Z` : value);
   const datetime = (value) =>
@@ -66,7 +71,7 @@
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
   function notify(message, kind = "ok") {
-    const el = $("notice");
+    const el = document.querySelector("dialog[open] [data-dialog-notice]") || $("notice");
     if (!el) return;
     el.textContent = message;
     el.className = `notice ${kind}`;
@@ -75,13 +80,19 @@
   }
   function clearNotice() {
     if ($("notice")) $("notice").hidden = true;
+    document.querySelectorAll("[data-dialog-notice]").forEach(el => { el.hidden = true; });
   }
   async function api(path, options = {}) {
     const headers = {
       ...(account ? { Authorization: `Bearer ${account.access_token}` } : {}),
       ...options.headers,
     };
-    const response = await fetch(path, { ...options, headers });
+    let response;
+    try { response = await fetch(path, { ...options, headers }); }
+    catch (error) {
+      if (error.name === "AbortError") throw error;
+      throw new Error("Không kết nối được máy chủ. Kiểm tra backend đang chạy rồi thử lại.");
+    }
     if (!response.ok) {
       if (response.status === 401 && account) {
         sessionStorage.removeItem(accountKey);
@@ -92,12 +103,20 @@
         const body = await response.json();
         detail = body.detail || detail;
       } catch (_) {}
+      const messages = {
+        "Invalid credentials": "Tên đăng nhập hoặc mật khẩu không đúng.",
+        "Student code already exists": "Mã sinh viên đã tồn tại. Hãy tìm hồ sơ cũ để chỉnh sửa.",
+        "Session is not open": "Buổi điểm danh đã đóng. Mở buổi khác để tiếp tục quét.",
+        "Session not found": "Không tìm thấy buổi điểm danh này.",
+        "Class already has an open session": "Lớp này đã có buổi đang mở. Chọn buổi đó trong danh sách hoặc đóng buổi cũ trước.",
+      };
       const error = new Error(
         Array.isArray(detail)
           ? detail.map((x) => x.msg).join("; ")
-          : String(detail),
+          : messages[detail] || String(detail),
       );
       error.status = response.status;
+      error.detail = detail;
       throw error;
     }
     if (response.status === 204) return null;
@@ -110,14 +129,23 @@
       headers: { ...options.headers, "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+  const pendingForms = new WeakSet();
   const run =
     (fn) =>
     async (...args) => {
+      const form = args[0]?.currentTarget?.tagName === "FORM" ? args[0].currentTarget : null;
+      if (form && pendingForms.has(form)) { args[0].preventDefault(); return; }
+      const buttons = form ? [...form.querySelectorAll('button[type="submit"]')] : [];
+      if (form) { pendingForms.add(form); form.setAttribute("aria-busy", "true"); }
+      buttons.forEach(button => { button.disabled = true; });
       try {
         clearNotice();
         await fn(...args);
       } catch (error) {
         notify(error.message, "error");
+      } finally {
+        if (form) { pendingForms.delete(form); form.removeAttribute("aria-busy"); }
+        buttons.forEach(button => { button.disabled = false; });
       }
     };
   const emptyRow = (cols, message) =>
@@ -256,7 +284,7 @@
       ? filtered
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.captured_pose_count}/5 góc</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> ${item.consent_status === "granted" ? `<a class="btn secondary small" href="/demo/faces?student=${item.id}">Quét Face ID</a>` : '<span class="muted">Cần đồng ý để quét</span>'} <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${faceStatus(item)}</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> ${item.consent_status === "granted" ? `<a class="btn secondary small" href="/demo/faces?student=${item.id}">Quét Face ID</a>` : '<span class="muted">Cần đồng ý để quét</span>'} <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -328,6 +356,7 @@
       run(async (event) => {
         event.preventDefault();
         const id = $("editingId").value;
+        const classId = $("enrollClass").value;
         const payload = {
           student_code: $("studentCode").value.trim(),
           full_name: $("fullName").value.trim(),
@@ -341,11 +370,17 @@
           id ? `/students/${id}` : "/students",
           payload,
         );
-        if ($("enrollClass").value)
-          await api(
-            `/classes/${$("enrollClass").value}/enrollments/${item.id}`,
-            { method: "POST" },
-          );
+        if (classId) {
+          try {
+            await api(`/classes/${classId}/enrollments/${item.id}`, { method: "POST" });
+          } catch (error) {
+            $("editingId").value = item.id;
+            $("formTitle").textContent = "Chỉnh sửa sinh viên";
+            await reloadStudents();
+            notify(`Hồ sơ ${item.student_code} đã lưu, nhưng chưa ghi danh được vào lớp. Bấm Lưu sinh viên để thử lại. ${error.message}`, "warn");
+            return;
+          }
+        }
         resetStudentForm();
         await reloadStudents();
         notify(`Đã lưu sinh viên ${item.student_code}.`);
@@ -479,6 +514,7 @@
   let enrollEpoch = 0;
   let enrollReadyAt = 0;
   let enrollStarting = false;
+  let enrollAbort = null;
   function createEnrollmentAudio() {
     let context = null, pulseTimer = null, resumeTimer = null;
     const tones = new Set();
@@ -582,6 +618,9 @@
     if (enrollTimer) clearInterval(enrollTimer);
     enrollTimer = null;
     enrollEpoch += 1;
+    enrollAbort?.abort();
+    enrollAbort = null;
+    $("enrollRequestStatus").textContent = "";
     enrollReadyAt = 0;
     enrollmentAudio.stop({ keepTone: keepCompletionTone });
     if (enrollStudentId && enrollmentId) {
@@ -600,6 +639,10 @@
     if (enrollBusy || !enrollStudentId || enrollIndex >= 5 || document.hidden || performance.now() < enrollReadyAt) return;
     const epoch = enrollEpoch, studentId = enrollStudentId, poseIndex = enrollIndex;
     enrollBusy = true;
+    const controller = new AbortController();
+    enrollAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    $("enrollRequestStatus").textContent = "Đang kiểm tra góc và chất lượng ảnh… Giữ yên trong vài giây.";
     try {
       const video = $("faceVideo"),
         canvas = $("faceCanvas");
@@ -618,7 +661,7 @@
           neutral_pitch: neutralPitch,
           neutral_yaw: neutralYaw,
           enrollment_id: enrollmentId,
-        },
+        }, { signal: controller.signal },
       );
       if (epoch !== enrollEpoch || studentId !== enrollStudentId || poseIndex !== enrollIndex) return;
       if (result.accepted) {
@@ -663,8 +706,13 @@
     } catch (error) {
       if (epoch !== enrollEpoch) return;
       stopEnrollment();
-      notify(error.message, "error");
+      notify(error.name === "AbortError" ? "Máy chủ xử lý quá lâu. Mẫu cũ vẫn được giữ; hãy thử đăng ký lại." : error.message, "error");
     } finally {
+      clearTimeout(timeout);
+      if (epoch === enrollEpoch) {
+        enrollAbort = null;
+        $("enrollRequestStatus").textContent = "";
+      }
       enrollBusy = false;
     }
   }
@@ -681,7 +729,7 @@
       ? items
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_codes?.join(", ") || "Chưa ghi danh")}</td><td>${badge(item.consent_status)}</td><td>${item.enrollment_complete ? '<span class="badge present">Hoàn tất</span>' : `${item.captured_pose_count}/5 góc`}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_codes?.join(", ") || "Chưa ghi danh")}</td><td>${badge(item.consent_status)}</td><td>${faceStatus(item)}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -722,13 +770,38 @@
       throw new Error(
         "Trình duyệt không hỗ trợ camera hoặc trang không được mở từ localhost/HTTPS.",
       );
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: "user" },
-      audio: false,
-    });
-    $(videoId).srcObject = stream;
-    await $(videoId).play();
-    return stream;
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: 640, height: 480, facingMode: "user" }, audio: false,
+      });
+      $(videoId).srcObject = stream;
+      await $(videoId).play();
+      return stream;
+    } catch (error) {
+      stream?.getTracks().forEach(track => track.stop());
+      const messages = {
+        NotAllowedError: "Chưa được cấp quyền camera. Cho phép camera trong trình duyệt rồi thử lại.",
+        NotFoundError: "Không tìm thấy camera. Kiểm tra kết nối camera rồi thử lại.",
+        NotReadableError: "Không mở được camera. Đóng ứng dụng khác đang dùng camera rồi thử lại.",
+      };
+      throw new Error(messages[error.name] || "Không khởi động được camera. Kiểm tra thiết bị và quyền camera.");
+    }
+  }
+  function closeFaceCamera() {
+    stopEnrollment();
+    faceStream?.getTracks().forEach(track => track.stop());
+    faceStream = null;
+    $("faceVideo").srcObject = null;
+    $("faceCamera").textContent = "Bật camera";
+  }
+  async function startFaceCamera() {
+    faceStream = await openCamera("faceVideo");
+    $("faceCamera").textContent = "Tắt camera";
+    faceStream.getVideoTracks().forEach(track => track.addEventListener("ended", () => {
+      closeFaceCamera();
+      renderEnrollment("Camera đã ngắt. Bật lại camera để bắt đầu lượt quét mới; mẫu cũ vẫn được giữ.");
+    }, { once: true }));
   }
   function frameBlob(video, canvas) {
     if (!video.videoWidth) throw new Error("Camera chưa sẵn sàng.");
@@ -770,8 +843,13 @@
     $("faceCamera").addEventListener(
       "click",
       run(async () => {
-        if (!faceStream) faceStream = await openCamera("faceVideo");
-        notify("Camera đã bật.");
+        if (faceStream) {
+          closeFaceCamera();
+          renderEnrollment("Đã tắt camera. Mẫu Face ID đã hoàn tất vẫn được giữ.");
+        } else {
+          await startFaceCamera();
+          notify("Camera đã bật.");
+        }
       }),
     );
     $("captureFace").addEventListener(
@@ -801,7 +879,7 @@
             throw new Error(
               "Chưa cài engine Face ID đa góc. Xem hướng dẫn cài đặt trong README.",
             );
-          if (!faceStream) faceStream = await openCamera("faceVideo");
+          if (!faceStream) await startFaceCamera();
           if (
             student?.face_template_count &&
             !confirm("Mẫu cũ vẫn dùng được cho đến khi quét đủ 5 góc mới. Tiếp tục?")
@@ -874,10 +952,14 @@
     return `<tr><td class="mono">#${item.session_id}</td><td class="name-cell"><strong>${esc(item.class_code)}</strong><small>${esc(item.class_name)}</small></td><td class="mono">${datetime(item.expected_start_time)}</td><td>${item.late_grace_minutes} phút</td><td>${item.student_count}</td><td><a class="btn secondary small" href="/demo/attendance?session=${item.session_id}">Điểm danh →</a></td></tr>`;
   }
   async function reloadSessions() {
-    const items = await getOpenSessions();
+    const [items, history] = await Promise.all([getOpenSessions(), api("/sessions?limit=100")]);
     $("sessionsTable").innerHTML = items.length
       ? items.map((x) => sessionRow(x)).join("")
       : emptyRow(6, "Chưa có buổi đang mở.");
+    const closed = history.filter(item => item.status === "closed");
+    $("sessionHistory").innerHTML = closed.length ? closed.map(item =>
+      `<tr><td class="mono">#${item.id}</td><td class="name-cell"><strong>${esc(item.class_code)}</strong><small>${esc(item.class_name)}</small></td><td>${datetime(item.expected_start_time || item.start_time)}</td><td>${item.present_count} / ${item.late_count} / ${item.absent_count}</td><td><a class="btn secondary small" href="/demo/attendance?session=${item.id}">Xem kết quả</a></td></tr>`).join("")
+      : emptyRow(5, "Chưa có buổi đã đóng trong 100 buổi gần nhất.");
   }
   async function initSessions() {
     const classList = await getClasses();
@@ -935,6 +1017,7 @@
     scanErrors = 0,
     boardRefreshBusy = false,
     lastBoardRefresh = 0;
+  let selectionEpoch = 0;
   const loggedAttendances = new Set();
   const motionCanvas = document.createElement("canvas");
   motionCanvas.width = 128;
@@ -1089,6 +1172,10 @@
   function renderBoard(board) {
     latestBoard = board;
     const rows = board.rows;
+    const closedPending = activeSession?.status === "closed" && rows.some(row => row.status === "pending");
+    $("closedRosterHint").hidden = !closedPending;
+    $("closedRosterHint").textContent = closedPending
+      ? "Buổi đã đóng còn sinh viên chưa có bản ghi; có thể do danh sách lớp được bổ sung sau đó. Kiểm tra và điều chỉnh thủ công nếu cần." : "";
     for (const [key, status] of [
       ["countPresent", "present"],
       ["countLate", "late"],
@@ -1141,25 +1228,58 @@
       if (activeSession?.session_id === sessionId) hint.textContent = "Chưa kiểm tra được Face ID của lớp. Có thể thử lại hoặc điểm danh thủ công.";
     }
   }
-  async function chooseSession(id) {
+  function resetAttendanceView() {
+    activeSession = latestBoard = null;
     stopScan();
     loggedAttendances.clear();
+    $("scanLog").innerHTML = '<li class="muted">Chưa có lượt quét trong phiên này.</li>';
+    ["countPresent", "countLate", "countPending", "countAbsent"].forEach(id => { $(id).textContent = "—"; });
+    $("sessionSubtitle").textContent = "Chọn buổi để xem thống kê.";
+    $("faceReadiness").hidden = true;
+    $("closedRosterHint").hidden = true;
+    $("attendanceLayout").classList.remove("closed-session");
+    $("scanActivity").hidden = false;
+    $("attendanceIntro").textContent = "Chọn buổi đang mở, bật camera và theo dõi kết quả theo thời gian thực.";
+    $("scanCamera").disabled = false;
+    $("scanCameraCard").hidden = false;
+    $("policyStart").value = "";
+    $("policyGrace").value = "";
+    $("attendanceTable").innerHTML = emptyRow(6, "Chọn buổi điểm danh để xem danh sách.");
+    ["savePolicy", "closeSession", "scanToggle", "exportCsv", "policyStart", "policyGrace"].forEach(id => { $(id).disabled = true; });
+  }
+  async function chooseSession(id) {
+    const epoch = ++selectionEpoch;
+    resetAttendanceView();
     const items = await getOpenSessions();
-    activeSession = items.find((x) => x.session_id === Number(id)) || null;
-    if (!activeSession) {
-      $("attendanceTable").innerHTML = emptyRow(
-        6,
-        "Chọn buổi đang mở để xem danh sách.",
-      );
-      return;
+    const selected = items.find((x) => x.session_id === Number(id)) || await api(`/sessions/${Number(id)}`);
+    if (epoch !== selectionEpoch) return;
+    activeSession = selected;
+    const closed = selected.status === "closed";
+    $("attendanceLayout").classList.toggle("closed-session", closed);
+    $("scanActivity").hidden = closed;
+    $("attendanceIntro").textContent = closed
+      ? "Buổi đã đóng. Xem kết quả, xuất CSV hoặc điều chỉnh thủ công có lý do."
+      : "Chọn buổi đang mở, bật camera và theo dõi kết quả theo thời gian thực.";
+    if (![...$("activeSession").options].some(option => option.value === String(id))) {
+      $("activeSession").add(new Option(`#${id} · ${selected.class_code} · Đã đóng`, String(id)));
+    }
+    ["savePolicy", "closeSession", "scanToggle", "policyStart", "policyGrace"].forEach(key => { $(key).disabled = closed; });
+    $("exportCsv").disabled = false;
+    $("scanCamera").disabled = closed;
+    $("scanCameraCard").hidden = closed;
+    if (closed && scanStream) {
+      scanStream.getTracks().forEach(track => track.stop());
+      scanStream = null;
+      $("scanVideo").srcObject = null;
+      $("scanCamera").textContent = "Bật camera";
     }
     sessionStorage.setItem("face-attendance-session", String(id));
     $("activeSession").value = String(id);
     $("policyStart").value = localInput(activeSession.expected_start_time);
     $("policyGrace").value = activeSession.late_grace_minutes;
     $("sessionSubtitle").textContent =
-      `${activeSession.class_code} · ${activeSession.class_name}`;
-    refreshReadiness(activeSession.session_id);
+      `${activeSession.class_code} · ${activeSession.class_name}${closed ? " · Đã đóng (có thể xem, xuất và điều chỉnh thủ công)" : ""}`;
+    if (!closed) refreshReadiness(activeSession.session_id);
     await refreshBoard();
     history.replaceState(null, "", `/demo/attendance?session=${id}`);
   }
@@ -1174,6 +1294,8 @@
     if (!scanStream.getVideoTracks().some(track => track.readyState === "live")) {
       stopScan();
       scanStream = null;
+      video.srcObject = null;
+      $("scanCamera").textContent = "Bật camera";
       renderScanFeedback("Camera đã ngắt kết nối. Vui lòng bật lại camera để tiếp tục.");
       return;
     }
@@ -1236,7 +1358,7 @@
     } catch (error) {
       if (!scanActive || scanEpoch !== epoch) return;
       clearScanFaces();
-      if ([401, 403, 404].includes(error.status) || error.message === "Session is not open") {
+      if ([401, 403, 404].includes(error.status) || error.detail === "Session is not open") {
         stopScan();
         notify(error.message, "error");
       } else {
@@ -1255,6 +1377,7 @@
     }
   }
   async function initAttendance() {
+    resetAttendanceView();
     renderScanFeedback("Quét liên tục nhiều khuôn mặt. Khung xanh là đã điểm danh; khung vàng tiếp tục chờ.");
     window.addEventListener("resize", () => {
       if (scanActive) renderScanFaces(lastScanResult);
@@ -1272,21 +1395,21 @@
     const query =
       new URLSearchParams(location.search).get("session") ||
       sessionStorage.getItem("face-attendance-session");
-    if (query && items.some((x) => x.session_id === Number(query)))
-      await chooseSession(query);
+    if (query && /^\d+$/.test(query)) {
+      try { await chooseSession(query); }
+      catch (error) { $("activeSession").value = ""; notify(error.message, "error"); }
+    }
+    if (!items.length && !activeSession) notify("Chưa có buổi đang mở. Vào Quản lý buổi học để mở buổi mới hoặc xem lịch sử.", "warn");
     $("activeSession").addEventListener(
       "change",
       run(async () => {
         if ($("activeSession").value)
           await chooseSession($("activeSession").value);
         else {
-          activeSession = null;
-          stopScan();
-          $("faceReadiness").hidden = true;
-          $("attendanceTable").innerHTML = emptyRow(
-            6,
-            "Chọn buổi đang mở để xem danh sách.",
-          );
+          selectionEpoch += 1;
+          resetAttendanceView();
+          sessionStorage.removeItem("face-attendance-session");
+          history.replaceState(null, "", "/demo/attendance");
         }
       }),
     );
@@ -1378,7 +1501,10 @@
         }
       }),
     );
-    $("refreshBoard").addEventListener("click", run(refreshBoard));
+    $("refreshBoard").addEventListener("click", run(async () => {
+      await refreshBoard();
+      if (activeSession && activeSession.status !== "closed") await refreshReadiness(activeSession.session_id);
+    }));
     $("exportCsv").addEventListener(
       "click",
       run(async () => {
@@ -1442,5 +1568,6 @@
     if (page === "faces") await initFaces();
     if (page === "sessions") await initSessions();
     if (page === "attendance") await initAttendance();
+    document.querySelectorAll("[data-initial-control]").forEach(control => { control.disabled = false; });
   })();
 })();

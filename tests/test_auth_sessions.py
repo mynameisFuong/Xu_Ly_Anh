@@ -78,6 +78,7 @@ def test_teacher_cannot_read_scan_or_export_another_class(auth_context):
     headers = login(client)
     assert client.get("/classes", headers=headers).json() == []
     assert client.get("/attendance-requests/open", headers=headers).json() == []
+    assert client.get(f"/sessions/{session.id}", headers=headers).status_code == 403
     assert client.get(f"/sessions/{session.id}/attendance-board", headers=headers).status_code == 403
     assert client.get(f"/reports/attendance.csv?session_id={session.id}", headers=headers).status_code == 403
     response = client.post(f"/sessions/{session.id}/scan-stream", headers=headers,

@@ -4,6 +4,7 @@ Tài liệu mô tả mã trong repository, phục vụ tìm hiểu và xây dự
 không phải báo cáo kết quả nghiệm thu. Đối chiếu với cấu hình `.env`, phiên bản
 commit và kết quả đo trên máy trình diễn trước khi trích dẫn con số. Các tài liệu
 cũ có thể mô tả các thiết kế đã thay đổi; trạng thái hiện tại được nêu tại đây.
+Danh mục tài liệu và cách lấy bằng chứng ở [README tài liệu](README.md).
 
 ## 1. Mục tiêu và phạm vi
 
@@ -11,6 +12,8 @@ AttendAI là bản demo điểm danh sinh viên bằng khuôn mặt chạy local
 quản lý sinh viên, lớp, sự đồng ý và buổi học; đăng ký Face ID năm góc qua camera;
 quét nhiều khuôn mặt trong cùng khung; xem/sửa kết quả và xuất báo cáo. Bản demo
 có web, desktop và camera worker; web là luồng được mô tả chi tiết dưới đây.
+Web hiện dành cho admin; teacher/user có phân quyền API và client phù hợp,
+chưa có web riêng đầy đủ. Tạo lớp/tài khoản mới chưa có form web chuyên biệt.
 
 Hệ thống **không kiểm tra liveness/PAD**: không thể tuyên bố chống ảnh in, video
 phát lại hoặc camera ảo. Không nhận diện/điểm danh giảng viên bằng khuôn mặt.
@@ -49,6 +52,10 @@ Các thực thể chính trong [models.py](../backend/app/models.py): `User`, `S
 `DeviceClassAccess`. Một sinh viên có thể được ghi danh vào nhiều lớp; một lớp
 có nhiều buổi. Ràng buộc `(session_id, student_id)` ngăn hai bản ghi điểm danh
 cho cùng một người trong một buổi.
+Lớp hành chính `class_label` chỉ là nhãn; `ClassEnrollment` mới quyết định một
+người có được tìm trong gallery của buổi hay không. Chi tiết schema/ERD và vòng
+đời dữ liệu nằm ở [DATA_MODEL](DATA_MODEL.md). Lịch sử bảng dùng roster hiện tại,
+chưa có snapshot thành viên; xóa mềm không xóa vật lý ảnh/vector.
 
 Một lớp chỉ được mở một buổi tại một thời điểm theo luồng tạo buổi. Giờ vào học
 và số phút cho phép trễ xác định kết quả: đến trước/bằng hạn là `present`, sau
@@ -73,6 +80,12 @@ xác nhận lần lượt `front`, `left`, `right`, `up`, `down`. `face_recognit
 trích vector 128 chiều; template lưu kèm nhãn góc, tên model và `model_version`.
 Ảnh xem trước lưu dưới dạng ảnh chân dung chuẩn hóa. Cần đủ cả năm góc của cùng
 profile/model thì mẫu mới đủ điều kiện nhận diện.
+Web lấy góc chính diện làm mốc yaw/pitch, chấp nhận quay/ngẩng nhẹ và giữ yên;
+mặc định một jitter cho embedding đăng ký. Ngưỡng hướng dẫn cụ thể và chất lượng
+nguồn ở [IMAGE_PROCESSING](IMAGE_PROCESSING.md). Các ngưỡng này không thay
+ngưỡng matching. Summary chỉ báo hoàn tất cho profile đang chạy; mẫu khác phiên
+bản được báo cần quét lại. Camera đăng ký có nút tắt, xử lý có trạng thái chờ
+và timeout 45 giây. Đăng ký đủ góc vẫn cần consent và ghi danh đúng lớp để điểm danh.
 
 Giao diện mới khởi tạo `FaceEnrollmentDraft` bằng mã lượt và lưu tạm từng góc;
 bộ mẫu đang dùng được giữ đến khi đủ năm góc mới. Khi đủ, các mẫu cũ được vô
@@ -106,7 +119,29 @@ trước khi hủy, mẫu tạm có thể còn trong DB đến lần xử lý ti
 Nếu ảnh không đạt chất lượng, không có mẫu phù hợp, danh tính mơ hồ hoặc engine
 thiếu, mặt đó không được tự động điểm danh. Người vận hành vẫn có thể xử lý thủ công.
 
+Web hiển thị lịch sử trong 100 buổi gần nhất; buổi đã đóng vẫn xem bảng, xuất
+CSV và điều chỉnh thủ công có lý do. Camera và thao tác thay giờ bị khóa cho
+buổi đóng. Bỏ chọn/đổi buổi xóa thống kê và log tạm của buổi trước trên màn hình,
+không xóa dữ liệu đã lưu. Nút Làm mới cập nhật cả bảng và số Face ID sẵn sàng.
+
 ## 6. Thuật toán xử lý ảnh và cấu hình
+
+Mặc định trong [config.py](../backend/app/config.py) và
+[.env.example](../.env.example), có thể khác `.env` đang chạy:
+
+| Cấu hình | Mặc định | Ý nghĩa |
+| --- | --- | --- |
+| PREPROCESSING_MODE / VERSION | enforce / v3 | Cùng profile khi đăng ký và nhận diện. |
+| FACE_DETECTION_BACKEND | hog | YuNet/hybrid là lựa chọn sau khi tải model riêng. |
+| PREPROCESSING_V2_ALIGN_EYES / DENOISE_METHOD | false / off | Giữ căn chip nội bộ dlib, không lọc sạch ảnh mặc định. |
+| ENROLLMENT_NUM_JITTERS | 1 | Số lần jitter khi trích mẫu, không phải số góc. |
+| FACE_DISTANCE_THRESHOLD / MARGIN | 0,52 / 0,04 | Khoảng cách tốt nhất và độ cách biệt với người thứ hai. |
+| ATTENDANCE_MIN_HITS | 3 | Ba lần khớp mới trong track. |
+| STREAM_CONFIRMATION_WINDOW_SECONDS / MAX_OBSERVATION_GAP_SECONDS | 30 / 10 | Cửa sổ bằng chứng và gián đoạn tối đa. |
+| STREAM_MAX_FACES_PER_FRAME | 8 | Giới hạn encode mỗi frame; không phải FPS hoặc số người nghiệm thu. |
+| AUTH_SESSION_HOURS | 8 | Hạn phiên bearer. |
+
+V3 là tên profile tiền xử lý; OpenAPI vẫn có phiên bản ứng dụng `1.0.0-demo`.
 
 Detector HOG là mặc định; `hybrid`/`yunet` là lựa chọn nếu có model YuNet. Chất
 lượng kiểm tra kích thước tối thiểu 80 px, độ sáng và phương sai Laplacian; v2 đo
@@ -159,7 +194,7 @@ thử số người, độ trễ, đúng/nhầm/bỏ sót và điều kiện cam
 so sánh profile trên cùng manifest; công cụ đánh giá stream làm replay ngoại tuyến.
 Các phép đo này có phạm vi khác nhau, không coi latency offline là FPS camera–UI.
 
-Kết quả smoke test ngày 31/10/2026: trên một người đã đăng ký với bốn probe từ
+Quan sát smoke cũ (31/10/2026, trước đợt rà soát UX này): trên một người đã đăng ký với bốn probe từ
 ảnh ví dụ và một probe người lạ, legacy đúng 3/4, v1 và v2-adaptive đúng 4/4;
 không nhận nhầm probe lạ duy nhất. Dữ liệu và biến thể quá ít để công bố accuracy
 hay FAR. Phép ghép hai ảnh công khai đo khoảng 3,18 s cho một frame hai mặt trên

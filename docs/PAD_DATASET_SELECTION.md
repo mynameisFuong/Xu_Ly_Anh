@@ -2,6 +2,8 @@
 > Nội dung/kết quả bên dưới thuộc phiên bản trước, không phải hướng dẫn vận hành
 > hiện hành. Xem [pipeline hiện tại](FACE_ANALYSIS.md) và
 > [kế hoạch preprocessing](PREPROCESSING_UPGRADE_PLAN.md).
+> Các bước train/evaluate trong tài liệu là thiết kế cũ, không chạy được bằng
+> repository hiện tại. Không cần tải dataset PAD để cài hoặc demo hệ thống.
 
 # Chọn dữ liệu huấn luyện và đánh giá PAD
 
@@ -21,14 +23,14 @@ ký có vị trí thường trực tại tổ chức và email học thuật/chu
 Không lấy bản sao từ nguồn phát lại không có quyền phân phối. Chưa có dữ liệu
 Replay-Attack được tải vào dự án và chưa có model HOG/DFT-SVM được huấn luyện.
 
-## Tương thích với hệ thống hiện tại
+## Bối cảnh phiên bản cũ khi chọn dữ liệu
 
 Engine nhận diện đang chạy là `ageitgey-face-recognition-dlib-resnet`, sinh
 embedding 128 chiều và landmarks 68 điểm. Đây là trọng số dlib đã huấn luyện
 sẵn; ảnh đăng ký trong hệ thống chỉ dùng làm template đối chiếu danh tính.
 Chúng không mang nhãn tấn công `print`/`replay` và không đủ để huấn luyện PAD.
 
-Backend hiện cấu hình `LIVENESS_BACKEND=minifasnet` với trọng số pretrained.
+Ở phiên bản cũ, backend từng cấu hình `LIVENESS_BACKEND=minifasnet` với trọng số pretrained.
 `train_liveness.py` (đã gỡ) huấn luyện **backend khác**:
 HOG + DFT + SVM. Nó không fine-tune dlib hoặc MiniFASNet. Đầu vào của script
 là ảnh BGR từ camera, có đúng một mặt, mặt tối thiểu 80 px và đạt quality gate.

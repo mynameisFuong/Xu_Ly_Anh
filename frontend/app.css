@@ -278,6 +278,9 @@ select:focus-visible {
   flex-wrap: wrap;
 }
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--accent);
   background: var(--accent);
   color: white;
@@ -390,6 +393,8 @@ select:focus-visible {
 }
 .section-title {
   display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   justify-content: space-between;
   align-items: center;
   margin: 28px 0 14px;
@@ -1025,6 +1030,9 @@ tbody tr:hover {
   .page-head {
     display: block;
   }
+  .page-head > .btn {
+    margin-top: 16px;
+  }
   .head-actions {
     margin-top: 18px;
   }
@@ -1157,3 +1165,8 @@ tbody tr:hover {
 .import-preview td:last-child { min-width: 200px; }
 .import-preview .import-error { color: #ad3333; }
 .import-preview .import-success { color: #087f75; }
+.closed-session { grid-template-columns: 1fr; }
+.closed-session #attendanceStats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 760px) {
+  .closed-session #attendanceStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

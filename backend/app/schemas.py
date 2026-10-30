@@ -86,6 +86,7 @@ class StudentFaceSummary(BaseModel):
     face_template_count: int
     captured_pose_count: int = 0
     enrollment_complete: bool = False
+    face_status: str = "incomplete"
     latest_image_path: str | None
     latest_image_url: str | None
 

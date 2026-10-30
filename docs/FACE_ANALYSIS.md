@@ -5,6 +5,8 @@ Liveness/PAD đã được gỡ khỏi hệ thống theo yêu cầu ngày 30/10/
 hoặc yêu cầu model chống giả mạo. Lịch sử kế hoạch nâng cấp nằm trong
 [PREPROCESSING_UPGRADE_PLAN.md](PREPROCESSING_UPGRADE_PLAN.md); cấu hình và
 thực nghiệm hiện tại ở [PREPROCESSING_BENCHMARK.md](PREPROCESSING_BENCHMARK.md).
+Mô tả học thuật, công thức và tham số thực sự được dùng nằm ở
+[IMAGE_PROCESSING.md](IMAGE_PROCESSING.md); hướng dẫn thao tác ở [USER_GUIDE](USER_GUIDE.md).
 
 ## Pipeline hiện tại
 
@@ -62,6 +64,9 @@ dependency bắt buộc; file model/dataset cũ trong storage không được n�
 Enrollment, scan-frame và camera worker phải dùng cùng profile. Khi đổi tham số
 ảnh hưởng embedding, đăng ký lại đủ năm góc của profile mới; không trộn mẫu cũ.
 Chỉ gỡ liveness trong lần này không thay profile preprocessing hay embedding.
+“Hoàn tất” trên trang Face ID tính đúng profile đang chạy; mẫu cũ được báo cần
+quét lại. Chỉ đủ năm góc chưa đủ để điểm danh: còn cần consent và ghi danh lớp.
+Web lấy yaw/pitch chính diện làm mốc cho các góc sau; mặc định một jitter.
 
 Web/desktop/worker mới dùng stream nhiều mặt, giữ video chạy và không yêu cầu
 bấm người tiếp theo. Mỗi mặt có khung vàng riêng khi chờ, khung xanh + tên/MSSV
@@ -80,6 +85,9 @@ checkbox bật/tắt âm thanh. Âm thanh được mở từ thao tác bấm b�
 quyền microphone. Dừng quét, đổi trang, lỗi request hoặc ẩn tab sẽ dừng tiếng
 tít; phản hồi cũ sau khi dừng không được đổi góc hay phát tiếng thành công.
 Nếu trình duyệt không hỗ trợ phát âm thanh, hướng dẫn bằng chữ vẫn hoạt động.
+Nút Tắt camera hủy lượt và giải phóng track ngay. Trạng thái xử lý cho biết
+server đang kiểm tra ảnh; timeout 45 giây kết thúc chờ phía client, không hứa
+ngắt được phép tính CPU ở server. Bộ đang hoạt động được giữ khi lượt mới chưa đủ.
 
 Desktop gửi scan-stream. Worker dùng camera token, hỏi camera/pipeline rồi gửi
 camera-scan-stream nếu backend hỗ trợ, kể cả preprocessing off. Việc gửi ảnh

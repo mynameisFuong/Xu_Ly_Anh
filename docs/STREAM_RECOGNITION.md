@@ -16,12 +16,16 @@ Mỗi người phải có đủ năm góc Face ID hợp lệ, còn đồng ý s�
 danh đúng lớp. Đăng ký mẫu vẫn chỉ cho phép một mặt mỗi ảnh; âm thanh hướng
 dẫn đăng ký năm góc được giữ nguyên.
 
+Nút Làm mới cập nhật cả bảng và số Face ID hợp lệ của lớp. Bỏ chọn/đổi buổi
+xóa log/thống kê tạm của buổi trước và dừng quét. Buổi đóng được xem lại từ
+trang Buổi học; không gửi frame nhưng vẫn xem/xuất/điều chỉnh thủ công được.
+
 ## Kiến trúc
 
 - [recognition.py](../ai_pipeline/recognition.py): `extract_frame_embeddings`
   giải mã và detect một lần cho frame, rồi xử lý riêng từng box. Không chọn
   người lớn nhất để bỏ qua người khác. Ảnh hỏng của một người không chặn cả nhóm.
-- [analysis.py](../ai_pipeline/analysis.py): dùng cùng profile v1/v2, full-frame
+- [analysis.py](../ai_pipeline/analysis.py): dùng cùng profile (v3 mặc định), full-frame
   coordinates và quality gate như enrollment. Không encode lại từ ảnh crop
   đã kéo giãn. Bỏ tính pose khi attendance không cần; landmark căn mắt vẫn giữ
   nếu profile yêu cầu. Shadow được lấy mẫu ở mức frame, không đổi kết quả thật.

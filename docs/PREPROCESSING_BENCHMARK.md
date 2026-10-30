@@ -70,6 +70,10 @@ Ngày 31/10/2026, cơ sở dữ liệu thử local được chuyển sang v3: ha
 từ camera nếu cần đánh giá độ chính xác thực tế. Cơ sở dữ liệu và ảnh này không
 được đưa vào Git; máy mới chạy seed chỉ có metadata và phải đăng ký khuôn mặt.
 
+Đoạn trên ghi lại một lần xử lý dữ liệu demo cũ, không phải migration tự động
+trên mọi máy. Hồ sơ người dùng đăng ký lại sau đó có bộ mẫu riêng; lấy trạng thái
+hiện tại từ API/CLI inventory, không suy ra số bộ mẫu từ mô tả lịch sử này.
+
 ## Dữ liệu benchmark
 
 Xem trực tiếp một ảnh được phép sử dụng (đầu ra là ảnh khuôn mặt, nên lưu trong
@@ -85,7 +89,9 @@ Thêm `--align-eyes` để khảo sát căn mắt ngoài; cần cài dlib và la
 Tan–Triggs, Kirsch chỉ là ảnh thí nghiệm. Muốn kết luận có ích cho model phải
 chạy benchmark với dữ liệu và ngưỡng cố định.
 
-Dùng ảnh có quyền sử dụng, khoảng 30 người và ít nhất ba phiên/camera thực.
+Dùng ảnh có quyền sử dụng. Với bài tập lớn có thể bắt đầu 5–10 người theo
+[quy trình thực nghiệm](THU_NGHIEM_DO_AN.md), công bố rõ mẫu nhỏ. Khoảng 30 người
+và ít nhất ba phiên/camera là mục tiêu mở rộng, không là điều kiện mới để chạy demo.
 Tạo `storage/recognition-benchmark/manifest.json`; đường dẫn ảnh tính tương đối
 với manifest. Ví dụ cấu trúc (thay ảnh và danh tính bằng dữ liệu thật):
 

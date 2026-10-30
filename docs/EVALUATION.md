@@ -1,70 +1,98 @@
-> Tài liệu lịch sử: liveness/PAD đã được gỡ theo yêu cầu ngày 30/10/2026.
-> Nội dung/kết quả bên dưới thuộc phiên bản trước, không phải hướng dẫn vận hành
-> hiện hành. Xem [pipeline hiện tại](FACE_ANALYSIS.md) và
-> [kế hoạch preprocessing](PREPROCESSING_UPGRADE_PLAN.md).
+# Kiểm chứng phần mềm và rà soát trải nghiệm
 
-# Kiểm chứng bản tích hợp liveness web — 29/10/2026
+Cập nhật 31/10/2026. Tài liệu ghi phạm vi kiểm thử của phiên bản hiện hành,
+không phải báo cáo thực nghiệm nhận diện trên người thật. Bản kiểm chứng PAD
+ngày 29/10 đã thuộc lịch sử Git; runtime hiện không có PAD hoặc thử thách liveness.
 
-## Môi trường và kết quả phần mềm
+## 1. Môi trường và cách tái lập
 
-Windows x64, Python 3.13.17 trong `.venv313`, dlib ResNet 128D, OpenCV 4.14,
-ONNX Runtime CPU. Hai artifact MiniFASNet từ release đã được kiểm SHA-256 theo
-`ai_pipeline/minifasnet.py`; đã nạp và chạy suy luận thực trên ảnh tổng hợp.
+Máy phát triển Windows x64, môi trường Python 3.13 trong `.venv313`; trên máy
+mới có thể dùng tên `.venv` theo README. Các dependency khai báo khoảng phiên
+bản, chưa có lockfile tái lập toàn bộ môi trường byte-for-byte. Ghi lại
+`python --version` và `python -m pip freeze` trên máy đo trước khi viết kết quả.
 
 ```powershell
-.\.venv313\Scripts\python.exe -m pytest -q --run-browser
-.\.venv313\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q --run-browser
+.\.venv\Scripts\python.exe -m ruff check .
 node --check frontend/app.js
 ```
 
-- 122 test pass, gồm 7 test Chrome headless với webcam tổng hợp; không chụp camera thật.
-- Lint và kiểm tra cú pháp JavaScript pass.
-- Còn một StarletteDeprecationWarning ở thư viện TestClient/httpx; không làm test thất bại.
-- Backend thật `/demo/attendance` trả HTTP 200; status báo MiniFASNet ready,
-  web_liveness_ready=true và preprocessing/liveness enforce trong cấu hình local.
+Browser test cần `requirements-browser.txt` và Google Chrome; dùng camera tổng
+hợp, không truy cập webcam thật. Nếu bỏ `--run-browser`, các test browser được
+skip; không ghi “toàn bộ UI đã kiểm thử” chỉ từ lệnh đó. Tests dùng DB tạm và
+API/ảnh tổng hợp hoặc fixture, không tạo điểm danh vào DB demo đang chạy.
 
-Đã kiểm tra: PAD trước embedding/tăng cường, cả hai model phải đạt ngưỡng, thiếu
-model không pass, cùng danh tính, nonce/sequence/hash mới, đủ thời gian, hết hạn,
-đổi người, đổi owner, reset, consume một lần, không ghi DB/ảnh khi chưa pass,
-idempotency đúng phạm vi, thu hồi consent, giao thức web, tọa độ xoay/roll và không
-báo thành công khi chưa lưu điểm danh. Quy tắc nghiệp vụ cũ vẫn có regression test.
+## 2. Phạm vi có bằng chứng tự động
 
-Đã bổ sung kiểm thử YuNet nạp/suy luận CPU, checksum, map box từ ảnh giới hạn kích
-thước về nguồn, giữ box HOG và từ chối mặt thứ hai. CLAHE ở nhánh tìm mặt không
-thay pixel PAD. Kiểm thử HTTP hoàn thành thử thách 7 bước qua 28 frame, trong đó
-7 frame mất mặt: giữ bước đã hoàn thành, reset hold hiện tại, không ghi DB trước
-frame cuối. Retry vẫn chặn nonce/sequence/hash sai, đổi người và mất mặt quá gap.
-Chrome xác nhận client giữ challenge và dùng sequence mới sau frame mất mặt.
+| Nhóm | Kiểm tra chính | Căn cứ |
+| --- | --- | --- |
+| Hình học/ảnh | BGR/dtype, EXIF, tọa độ xoay/mirror, mask nguồn, không sửa input, nhánh gamma/CLAHE/nhiễu và fallback | test_preprocessing.py, test_face_analysis.py |
+| Detector/embedding | HOG/YuNet adapter, profile, pose tương đối, từ chối ảnh chất lượng thấp | test_detection.py, test_face_recognition.py |
+| Gallery/stream | Ngưỡng/margin, nhiều mẫu, frame mới, track đổi/người giao nhau, không kế thừa phiếu sai | test_gallery.py, test_streaming.py, test_temporal.py |
+| Nghiệp vụ | Consent, đúng lớp/profile, đủ năm góc, bộ đăng ký tạm, rollback, chống trùng điểm danh, giờ UTC, điều chỉnh/đóng buổi | test_attendance_service.py |
+| Quyền/phiên | Hash mật khẩu, token có hạn/thu hồi, phân quyền lớp, tương thích mật khẩu cũ | test_auth_sessions.py, test_password_compatibility.py |
+| Dữ liệu demo/chuyển máy | Seed lặp, không ghi đè dữ liệu thật, metadata import/export không ảnh/vector | test_seed_demo.py, test_transfer_metadata.py |
+| Nhập sinh viên | CSV/XLSX, xem trước, digest, dòng lỗi/trùng, giao dịch DB và UI | test_student_import.py, test_student_import_ui.py |
+| Giao diện | Vòng quét nhiều mặt, overlay đúng người, màu xanh cần attendance, âm thanh, camera, lỗi trong dialog, lịch sử buổi và trạng thái rỗng | test_web_ui.py |
+| Công cụ thí nghiệm | Manifest, split/chống rò dữ liệu, calibration, số liệu và dry run | test_preprocessing_benchmark.py, test_evaluate_stream.py, test_camera_worker.py |
 
-Smoke test bổ sung dùng ba ảnh ví dụ công khai từ
-[face_recognition](https://github.com/ageitgey/face_recognition/tree/master/examples),
-chỉ giữ trong RAM: 42 biến thể roll/độ sáng, HOG và hybrid đều thấy đúng một mặt
-ở 40/42 trường hợp, các box HOG có sẵn được giữ nguyên. Bộ nhỏ này không cho thấy
-cải thiện tỷ lệ phát hiện và không mô phỏng được yaw 3D hay webcam của người dùng;
-không dùng nó để công bố giảm tỷ lệ mất mặt. YuNet đã nạp được ở backend local,
-status báo hybrid/yunet_ready=true, profile embedding hiện hữu giữ nguyên.
+Tên file trong bảng nằm ở [tests](../tests). Một test có tên phù hợp không tự
+chứng minh mọi tình huống thực tế; xem assertions và fixture khi cần trích dẫn.
 
-## Những gì chưa được đo
+## 3. Các vấn đề UX đã sửa trong đợt rà soát
 
-Chưa có dataset ảnh camera được phép sử dụng cho môi trường mục tiêu. Vì vậy chưa
-có APCER/BPCER, FAR/FRR, tỷ lệ pass thử thách của người thật hay p95 trên camera
-vật lý. Test vector/ảnh tổng hợp và UI với API mô phỏng chỉ chứng minh logic,
-không chứng minh khả năng chống ảnh in/video trên phần cứng thực tế.
+| Vấn đề quan sát từ code/luồng UI | Sửa đổi | Kiểm chứng |
+| --- | --- | --- |
+| Bộ năm góc thuộc profile cũ vẫn báo Hoàn tất | Summary tính theo model/profile đang chạy; hiển thị “Cần quét lại · mẫu cũ” hoặc engine chưa có | Test summary khác profile và thiếu dependency. |
+| Không tắt được camera đăng ký tại chỗ | Nút Bật/Tắt, dừng draft/âm thanh, giải phóng track; thông báo khi ngắt thiết bị | Browser test kiểm tra track ended và không gửi thêm frame. |
+| Đang encode nhưng không biết đang làm gì | Dòng trạng thái đang xử lý; request đăng ký có timeout 45 giây, không để chờ vô hạn | Ca đăng ký thành công/lỗi/phản hồi muộn và trạng thái sau tắt camera. |
+| Lỗi quyền camera hoặc mạng khó hiểu | Hướng dẫn tiếng Việt cho bị từ chối quyền, không có/bận camera, mất backend | Browser test giả lỗi NotAllowedError. |
+| Bỏ chọn/đổi buổi còn số liệu hoặc log cũ | Xóa thống kê/log/overlay, khóa thao tác cần buổi; chặn kết quả lựa chọn cũ ghi đè lựa chọn mới | Test bỏ chọn buổi, hồi quy stream. |
+| Đóng buổi xong không có đường xem lại | Danh sách lịch sử gần nhất, endpoint chi tiết buổi, chế độ xem buổi đã đóng có xuất CSV/thủ công | API test buổi closed và browser test khóa camera/chính sách. |
+| Lỗi lưu điều chỉnh nằm sau hộp thoại | Đưa lỗi vào dialog, giữ nội dung để sửa/thử lại | Browser test PUT thất bại. |
+| Bấm lưu liên tục tạo request lặp | Khóa submit trong lúc chờ và guard submit trùng | Browser test form mở buổi với response trì hoãn. |
+| Nút bấm được trước khi khởi tạo xong nên cú bấm bị bỏ qua | Nút nhập/sửa sinh viên, camera đăng ký và mở buổi bị khóa trong khi tải dữ liệu; chỉ bật sau khi gắn trình xử lý | Hồi quy UI nhập danh sách với API thật/DB tạm, đặc biệt lúc engine chưa được nạp. |
+| Hồ sơ đã tạo nhưng ghi danh lớp thất bại | Giữ ID ở chế độ sửa; thông báo hồ sơ đã lưu, thử ghi danh lại thay vì tạo hồ sơ trùng | Xử lý client; cần thử lỗi mạng thực để đánh giá trải nghiệm tổng thể. |
+| Bố cục mobile và buổi đã đóng chưa hợp lý | Tách nút khỏi phần mô tả; kết quả closed chiếm đủ chiều ngang, ẩn log quét và nhắc khi còn người chưa có bản ghi | Xem ảnh chụp desktop/mobile từ server local; kiểm tra không tràn ngang và không có lỗi JavaScript. |
 
-Chưa nghiệm thu chống camera ảo, deepfake tương tác, mặt nạ 3D hoặc client bị kiểm
-soát. Webcam RGB và thử thách chuyển động không cung cấp chứng thực phần cứng.
-Camera-token endpoint là kênh worker tin cậy, dùng PAD + xác nhận nhiều frame,
-không phải giao thức thử thách tương tác của web. Không đưa token camera vào client
-web; trước triển khai công khai cần thay xác thực demo và quản trị khóa thiết bị.
+Các bản sửa trước đó được giữ: nút ghi danh tại trang Face ID, lớp điểm danh
+tách lớp hành chính, gửi frame nối tiếp, chỉ báo xanh khi đã có bản ghi, xóa
+overlay cũ và log không lặp, âm thanh ngắn/dài khi quét góc.
 
-## Nghiệm thu thực địa tiếp theo
+## 4. Kết quả chạy tại máy phát triển
 
-Dùng quy trình và CSV trong [FACE_ANALYSIS.md](FACE_ANALYSIS.md), đo riêng ảnh in,
-ảnh in bị uốn/đục mắt, video trên điện thoại/tablet/LCD, nhiều mức sáng/tần số và
-webcam chưa thấy; đồng thời đo người thật đeo kính, góc/sáng khác nhau. Dữ liệu
-validation/test phải tách người/phiên, không dùng ảnh đăng ký để đánh giá nhận diện.
+Lượt chạy cuối ngày 31/10/2026: `pytest -q --run-browser` đạt **216 passed**, không
+skip, trong 162,56 giây trên máy phát triển. Ruff và `node --check frontend/app.js`
+đạt. Hai cảnh báo thư viện: TestClient/httpx deprecation và face_recognition_models
+dùng pkg_resources; không có test lỗi. Trong đó 30 ca ở test_web_ui.py và hai ca
+UI nhập danh sách dùng Chrome/camera tổng hợp; các ca còn lại là unit/integration.
+Ca UI nhập danh sách được chạy riêng trong process mới, engine chưa được nạp,
+cũng đạt (1 passed); xác nhận lỗi bấm nút trước khởi tạo đã được sửa. Kiểm tra
+Chrome trực tiếp trên server local ở 1280×900 và 390×844: không có lỗi JavaScript,
+không tràn ngang toàn trang, nút mobile không chồng mô tả, buổi đóng ẩn camera
+và có thể xem bảng/xuất kết quả. Kiểm tra 19 tài liệu Markdown: không có liên kết
+file local hỏng hoặc code fence chưa đóng. Không bật camera vật lý ở phép kiểm tra này.
+Phải chạy lại trên đúng commit/môi trường khi dùng làm minh chứng. Thời gian chạy
+cả bộ test không phải độ trễ nhận diện hoặc FPS của hệ thống.
 
-Chạy `scripts/evaluate_liveness.py` cho PAD, đóng băng ngưỡng trên validation trước
-khi đánh giá test. Kiểm tra toàn bộ thử thách trên web riêng, tính theo phiên thay
-vì coi các frame liên tiếp là mẫu độc lập. Chỉ duyệt model sau khi kết quả phù hợp
-mục tiêu của đơn vị; cờ allow_pretrained local không thay thế bước nghiệm thu này.
+Quan sát cũ ngày 31/10: một ảnh đăng ký local xử lý jitter=1 khoảng 4,64 giây
+và jitter=3 khoảng 8,90 giây. Đây là hai lượt trên **một ảnh** tại một thời
+điểm, không có lặp mẫu/p95/đo công suất máy, chỉ giải thích lựa chọn mặc định
+`ENROLLMENT_NUM_JITTERS=1`; không dùng để tuyên bố hệ thống nhanh gấp hai nói chung.
+
+Các quan sát legacy/v1/v2 trên vài ảnh công khai trong tài liệu benchmark thuộc
+thử nhỏ trước đây; artifact nằm local, không được phân phối cùng repo. Chưa có
+bộ kết quả camera/người thật độc lập để so sánh v3 với baseline một cách tổng quát.
+
+## 5. Việc còn phải kiểm thử thực địa
+
+- Người thật tự đăng ký năm góc: tỷ lệ hoàn tất, thời gian, hiểu hướng quay và tiếng tít.
+- Một, hai, 3–4 người vào/rời/che nhau; tên không bám sang người mới, không nhận nhầm người lạ.
+- Ánh sáng khác nhau, kính, khoảng cách, camera bị ngắt và CPU yếu; đo thời gian đến ghi nhận.
+- Độ đúng của bảng sau chỉnh thủ công, đóng buổi và xuất file; cho người ngoài nhóm tự thao tác.
+
+Theo [THU_NGHIEM_DO_AN](THU_NGHIEM_DO_AN.md), ghi đúng số người/lượt, tách ảnh
+đăng ký và probe khác phiên, không suy ra accuracy/FAR/FRR từ test tổng hợp.
+Chưa có khả năng chống ảnh in/video; không dùng từ “liveness đạt” trong báo cáo.
+Giới hạn dữ liệu lịch sử, retention, nhiều process và giao diện quản trị còn thiếu
+được nêu ở [SYSTEM](SYSTEM.md), [DATA_MODEL](DATA_MODEL.md).

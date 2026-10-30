@@ -3,6 +3,34 @@
 OpenAPI đầy đủ ở /docs hoặc /openapi.json. Liveness đã được gỡ; endpoint
 /sessions/{id}/liveness-challenge và schema WebLivenessState không còn tồn tại.
 
+## Nhóm endpoint nghiệp vụ
+
+| Nhóm | Endpoint chính | Quyền |
+| --- | --- | --- |
+| Sức khỏe hệ thống | GET /health | Công khai, chỉ trả status. |
+| Sinh viên | GET/POST /students, PATCH/DELETE /students/{id} | Admin. |
+| Trạng thái Face ID | GET /admin/students/faces | Admin. |
+| Lớp và ghi danh | GET/POST /classes, POST /classes/{id}/enrollments/{student_id} | GET/ghi danh: teacher/admin; tạo lớp: admin. |
+| Buổi học | POST /classes/{id}/sessions, GET /attendance-requests/open, GET /sessions?limit=100 | Theo quyền lớp; lịch sử tối đa 100. |
+| Chi tiết buổi | GET /sessions/{id} | User/teacher/admin theo quyền lớp, kể cả buổi đóng. |
+| Chính sách/đóng buổi | PUT /sessions/{id}/policy, POST /sessions/{id}/close | Teacher/admin theo lớp; chỉ buổi mở. |
+| Kết quả | GET /sessions/{id}/attendance-board, /attendance, /attendance-stats | Board: user/teacher/admin; attendance/stats: teacher/admin; luôn theo lớp. |
+| Thủ công | PUT /sessions/{id}/attendance/{student_id} | Teacher/admin, reason không rỗng; cho phép sau đóng buổi. |
+| Báo cáo | GET /reports/attendance.csv hoặc .xlsx?session_id={id} | Teacher/admin theo lớp. |
+
+OpenAPI mô tả đầy đủ schema và quyền dependency trong mã. `GET /sessions/{id}`
+trả `AttendanceRequestRead`: session_id, class_id/code/name, teacher_name,
+expected_start_time, planned_end_time, late_grace_minutes, status, student_count.
+Web dùng status=closed để khóa camera/chính sách và vẫn cho xem/xuất kết quả.
+`GET /sessions` trả `SessionSummaryRead` gồm `id` (khác `session_id` ở chi tiết),
+thống kê hiện tại và trạng thái; mặc định 20, giới hạn 1–100.
+
+`GET /admin/students/faces` có `class_codes` (lớp học ghi danh), `class_label`
+(lớp hành chính), số mẫu active, số góc của **profile hiện tại** và `face_status`:
+`ready`, `incomplete`, `outdated`, `engine_unavailable`. `enrollment_complete`
+chỉ true khi đủ năm góc của profile đang chạy; không đại diện cho quyền điểm danh
+ở mọi lớp. Thiếu engine không chặn endpoint quản lý hồ sơ.
+
 ## Xác thực
 
 Web/desktop đăng nhập bằng `POST /auth/login-json` (hoặc `/auth/login`) với JSON
@@ -192,3 +220,27 @@ Endpoint `/students/{id}/face-enrollment/reset` cũ vẫn vô hiệu hóa mẫu 
 không phải thử thách trong luồng điểm danh. Upload/import dùng cùng preprocessing
 và quality gate. PUT /sessions/{id}/attendance/{student_id} vẫn yêu cầu quyền,
 lý do và audit. Quy tắc đúng giờ/trễ/vắng không đổi.
+
+Body scan đăng ký (thay ảnh và enrollment_id bằng giá trị thật):
+
+```json
+{
+  "image_base64": "data:image/jpeg;base64,...",
+  "target_pose": "left",
+  "neutral_pitch": 5.0,
+  "neutral_yaw": 3.0,
+  "enrollment_id": "0123456789abcdef0123456789abcdef"
+}
+```
+
+`target_pose`: front/left/right/up/down. Hai mốc neutral lấy từ response của
+khung front đã được chấp nhận; tùy chọn để tương thích client cũ. Chúng chỉ phục
+vụ hướng dẫn thu mẫu, không chứng minh liveness hoặc quyền ghi điểm danh.
+Response có accepted, message, detected_pose, yaw, pitch, captured_poses,
+missing_poses, progress_percent, completed, engine. Web chỉ gửi một scan đang
+chờ tại một thời điểm và timeout 45 giây; hủy request HTTP không bảo đảm tác vụ
+CPU phía server đã dừng, nên mã lượt/owner và transaction vẫn cần thiết.
+
+Ảnh mẫu lấy embedding trước khi chuẩn hóa chân dung hiển thị; file chân dung
+400×600 lưu local không phải vector và không nên dùng thay frame gốc để đánh
+giá. Đổi profile yêu cầu đăng ký lại; giảm số jitter không đổi model/profile.
