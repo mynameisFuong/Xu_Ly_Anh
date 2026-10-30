@@ -6,6 +6,10 @@
   try {
     account = JSON.parse(sessionStorage.getItem(accountKey) || "null");
   } catch (_) {}
+  if (account && !account.access_token) {
+    sessionStorage.removeItem(accountKey);
+    account = null;
+  }
   if (page !== "login" && !account) {
     location.replace("/demo/login");
     return;
@@ -72,11 +76,15 @@
   }
   async function api(path, options = {}) {
     const headers = {
-      ...(account ? { "X-User-Id": String(account.user_id) } : {}),
+      ...(account ? { Authorization: `Bearer ${account.access_token}` } : {}),
       ...options.headers,
     };
     const response = await fetch(path, { ...options, headers });
     if (!response.ok) {
+      if (response.status === 401 && account) {
+        sessionStorage.removeItem(accountKey);
+        location.replace("/demo/login");
+      }
       let detail = `Lỗi ${response.status}`;
       try {
         const body = await response.json();
@@ -177,10 +185,11 @@
   $("topbar").className = "topbar";
   $("topbar").innerHTML =
     `<span class="crumb">Face Attendance &nbsp;/&nbsp; <strong>${labels[page]}</strong></span><span class="system-pill">Hệ thống nội bộ</span>`;
-  $("logout").addEventListener("click", () => {
+  $("logout").addEventListener("click", run(async () => {
+    await json("POST", "/auth/logout", {});
     sessionStorage.removeItem(accountKey);
     location.assign("/demo/login");
-  });
+  }));
   $("menuToggle").addEventListener("click", () => {
     const open = $("sidebar").classList.toggle("open");
     $("menuToggle").setAttribute("aria-expanded", String(open));
@@ -723,7 +732,7 @@
         );
         if (!item?.latest_image_url) return;
         const response = await fetch(item.latest_image_url, {
-          headers: { "X-User-Id": String(account.user_id) },
+          headers: { Authorization: `Bearer ${account.access_token}` },
         });
         if (!response.ok) throw new Error("Không tải được ảnh.");
         if (faceUrl) URL.revokeObjectURL(faceUrl);
@@ -1207,7 +1216,7 @@
         if (!activeSession) throw new Error("Chọn buổi điểm danh.");
         const path = `/reports/attendance.csv?session_id=${activeSession.session_id}`;
         const response = await fetch(path, {
-          headers: { "X-User-Id": String(account.user_id) },
+          headers: { Authorization: `Bearer ${account.access_token}` },
         });
         if (!response.ok) throw new Error("Không xuất được báo cáo.");
         const url = URL.createObjectURL(await response.blob());

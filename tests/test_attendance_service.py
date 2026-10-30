@@ -115,6 +115,7 @@ def test_scan_frame_returns_face_box_without_exposing_identity_for_unknown_face(
 
     class FakeRecognizer:
         model_version = "test-model"
+        distance_metric = "euclidean"
 
         def extract_single_embedding(self, _image_bytes):
             return EmbeddingResult(True, np.zeros(128, dtype=np.float32), face_box=(10, 20, 70, 80))
@@ -381,6 +382,16 @@ def api_context(monkeypatch):
     monkeypatch.setattr("backend.app.services.stream_recognition.get_settings", lambda: settings)
     monkeypatch.setattr("backend.app.api._save_attendance_evidence", lambda *_args, **_kwargs: None)
 
+    from backend.app.security import issue_session
+    credentials = issue_session(db, teacher)
+    clock = [100.0]
+
+    def tick():
+        clock[0] += 0.6
+        return clock[0]
+
+    monkeypatch.setattr("backend.app.services.stream_recognition.monotonic", tick)
+
     class Recognizer:
         model_name = "test-engine"
         model_version = "test-model"
@@ -405,6 +416,7 @@ def api_context(monkeypatch):
     from backend.app.services.stream_recognition import stream_states
     stream_states.cache_clear()
     with TestClient(app) as client:
+        client.headers["Authorization"] = f"Bearer {credentials['access_token']}"
         yield client, db, teacher, student, class_, session, settings, recognizer
     db.close()
     engine.dispose()
@@ -429,7 +441,7 @@ def test_camera_routes_require_camera_token(api_context):
     assert status.status_code == 200 and status.json()["preprocessing_mode"] == "off"
     body = {"image_base64": base64.b64encode(b"frame").decode()}
     assert client.post(f"/sessions/{session.id}/camera-scan-frame", json=body).status_code == 422
-    assert client.get("/face-analysis/status").status_code == 422
+    assert client.get("/face-analysis/status", headers={"Authorization": ""}).status_code == 401
 
 
 def test_legacy_camera_policy_does_not_require_backend_image_dependencies(api_context, monkeypatch):
@@ -448,7 +460,7 @@ def test_both_scan_routes_hide_identity_and_write_nothing_after_source_rejection
     client, db, teacher, _, _, session, settings, recognizer = api_context
     recognizer.result = EmbeddingResult(False, np.empty(0, np.float32), reason=reason, face_box=(10, 20, 90, 100))
     body = {"image_base64": base64.b64encode(b"frame").decode()}
-    for route, headers in (("scan-frame", {"X-User-Id": str(teacher.id)}),
+    for route, headers in (("scan-frame", {"Authorization": client.headers["Authorization"]}),
                            ("camera-scan-frame", {"X-Camera-Token": "test-camera-token"})):
         response = client.post(f"/sessions/{session.id}/{route}", json=body, headers=headers)
         assert response.status_code == 200
@@ -480,7 +492,7 @@ def test_camera_dry_run_confirms_without_writes_and_real_scan_records_once(api_c
 def test_enrollment_rejection_does_not_capture_a_pose(api_context):
     client, db, teacher, student, _, _, settings, recognizer = api_context
     recognizer.result = EmbeddingResult(False, np.empty(0, np.float32), reason="Image is blurry: blur score 1.0")
-    response = client.post(f"/students/{student.id}/face-enrollment/scan", headers={"X-User-Id": str(teacher.id)},
+    response = client.post(f"/students/{student.id}/face-enrollment/scan", headers={"Authorization": client.headers["Authorization"]},
                            json={"image_base64": base64.b64encode(b"frame").decode(), "target_pose": "front"})
     assert response.status_code == 200
     result = response.json()
@@ -508,13 +520,13 @@ def test_web_scan_records_without_challenge_pose_or_pad(api_context, legacy_fiel
     client, db, teacher, student, _, session, _, recognizer = api_context
     assert recognizer.result.pose is None and recognizer.result.diagnostics is None
     add_pose_templates(db, student)
-    response = client.post(f"/sessions/{session.id}/scan-frame", headers={"X-User-Id": str(teacher.id)},
+    response = client.post(f"/sessions/{session.id}/scan-frame", headers={"Authorization": client.headers["Authorization"]},
                            json={"image_base64": base64.b64encode(b"frame").decode(), **legacy_fields})
     assert response.status_code == 200
     result = response.json()
     assert result["decision"] == "recognized" and result["attendance"] is not None
     assert "liveness" not in result
-    again = client.post(f"/sessions/{session.id}/scan-frame", headers={"X-User-Id": str(teacher.id)},
+    again = client.post(f"/sessions/{session.id}/scan-frame", headers={"Authorization": client.headers["Authorization"]},
                         json={"image_base64": base64.b64encode(b"frame").decode()}).json()
     assert again["already_recorded"] is True
     assert len(db.scalars(select(RecognitionEvent)).all()) == 1
@@ -522,13 +534,13 @@ def test_web_scan_records_without_challenge_pose_or_pad(api_context, legacy_fiel
 
 def test_retired_challenge_and_schema_are_not_exposed(api_context):
     client, _, teacher, _, _, session, _, _ = api_context
-    response = client.post(f"/sessions/{session.id}/liveness-challenge", headers={"X-User-Id": str(teacher.id)})
+    response = client.post(f"/sessions/{session.id}/liveness-challenge", headers={"Authorization": client.headers["Authorization"]})
     assert response.status_code == 404
     schema = client.get("/openapi.json").json()
     assert "WebLivenessState" not in schema["components"]["schemas"]
     fields = schema["components"]["schemas"]["FrameScanRequest"]["properties"]
     assert not {"challenge_id", "step_token", "sequence"} & fields.keys()
-    response = client.get("/face-analysis/status", headers={"X-User-Id": str(teacher.id)})
+    response = client.get("/face-analysis/status", headers={"Authorization": client.headers["Authorization"]})
     assert response.status_code == 200
     assert not any("liveness" in key for key in response.json())
 
@@ -538,7 +550,7 @@ def test_consent_revocation_still_prevents_web_attendance(api_context):
     add_pose_templates(db, student)
     student.consent_status = ConsentStatus.REVOKED.value
     db.commit()
-    response = client.post(f"/sessions/{session.id}/scan-frame", headers={"X-User-Id": str(teacher.id)},
+    response = client.post(f"/sessions/{session.id}/scan-frame", headers={"Authorization": client.headers["Authorization"]},
                            json={"image_base64": base64.b64encode(b"frame").decode()})
     assert response.json()["decision"] == "unknown"
     assert db.scalar(select(AttendanceRecord)) is None
@@ -559,8 +571,8 @@ def post_stream(context, frame_id, *, stream_id="stream-one", camera=False, dry_
     client, _, teacher, _, _, session, _, _ = context
     return client.post(f"/sessions/{session.id}/{'camera-scan-stream' if camera else 'scan-stream'}",
                        params={"dry_run": str(dry_run).lower()} if camera else {},
-                       headers={"X-Camera-Token": "test-camera-token"} if camera else {"X-User-Id": str(teacher.id)},
-                       json={"image_base64": base64.b64encode(b"frame").decode(), "stream_id": stream_id,
+                       headers={"X-Camera-Token": "test-camera-token"} if camera else {"Authorization": client.headers["Authorization"]},
+                       json={"image_base64": base64.b64encode(f"frame-{frame_id}".encode()).decode(), "stream_id": stream_id,
                              "frame_id": frame_id, "camera_id": "group-camera"})
 
 
@@ -678,3 +690,33 @@ def test_stream_rechecks_consent_before_confirming_and_respects_closed_session(a
     session.status = "closed"
     db.commit()
     assert post_stream(api_context, 3).status_code == 409
+
+
+def test_same_image_with_new_sequence_cannot_add_votes(api_context):
+    client, db, _, student, _, session, _, _ = api_context
+    add_pose_templates(db, student)
+    body = {"image_base64": "ZnJvemVuLWZyYW1l", "stream_id": "frozen", "frame_id": 0}
+    assert client.post(f"/sessions/{session.id}/scan-stream", json=body).json()["faces"][0]["confirmation_hits"] == 1
+    body["frame_id"] = 1
+    assert client.post(f"/sessions/{session.id}/scan-stream", json=body).status_code == 409
+    assert db.scalar(select(AttendanceRecord)) is None
+
+
+def test_rapid_distinct_frames_do_not_confirm_and_timings_are_reported(api_context, monkeypatch):
+    _, db, _, student, _, _, _, _ = api_context
+    add_pose_templates(db, student)
+    monkeypatch.setattr("backend.app.services.stream_recognition.monotonic", lambda: 100.0)
+    for index in range(4):
+        response = post_stream(api_context, index)
+        assert response.status_code == 200
+        result = response.json()
+        assert result["faces"][0]["confirmation_hits"] == 1
+        assert set(result["timings_ms"]) == {"inference", "gallery", "matching"}
+    assert db.scalar(select(AttendanceRecord)) is None
+
+
+def test_histogram_fallback_cannot_mark_attendance(api_context):
+    _, db, _, _, _, _, _, recognizer = api_context
+    recognizer.distance_metric = "cosine"
+    assert post_stream(api_context, 0).status_code == 503
+    assert db.scalar(select(AttendanceRecord)) is None

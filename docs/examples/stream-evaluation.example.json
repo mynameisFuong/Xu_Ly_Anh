@@ -1,0 +1,21 @@
+{
+  "enrollment": [
+    {"subject":"person-a","session":"day-1","partition":"validation","pose":"front","path":"data/a-front.jpg"},
+    {"subject":"person-a","session":"day-1","partition":"validation","pose":"left","path":"data/a-left.jpg"},
+    {"subject":"person-a","session":"day-1","partition":"validation","pose":"right","path":"data/a-right.jpg"},
+    {"subject":"person-a","session":"day-1","partition":"validation","pose":"up","path":"data/a-up.jpg"},
+    {"subject":"person-a","session":"day-1","partition":"validation","pose":"down","path":"data/a-down.jpg"}
+  ],
+  "streams": [
+    {
+      "session":"day-2",
+      "partition":"validation",
+      "condition":"normal-two-people",
+      "frames": [
+        {"path":"data/frame-000.jpg","timestamp":0.0,"faces":[{"subject":"person-a","box":[20,30,100,120]},{"subject":"visitor","box":[180,30,100,120]}]},
+        {"path":"data/frame-001.jpg","timestamp":0.3,"faces":[{"subject":"person-a","box":[22,30,100,120]},{"subject":"visitor","box":[178,30,100,120]}]},
+        {"path":"data/frame-002.jpg","timestamp":0.6,"faces":[{"subject":"person-a","box":[24,30,100,120]},{"subject":"visitor","box":[176,30,100,120]}]}
+      ]
+    }
+  ]
+}

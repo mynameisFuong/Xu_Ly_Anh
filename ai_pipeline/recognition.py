@@ -218,6 +218,7 @@ class FaceRecognizer:
         unique.sort(key=lambda box: (box[0], box[1], box[2], box[3]))
         selected = {(offset + index) % len(unique) for index in range(min(max_faces, len(unique)))} if unique else set()
         results = []
+        shared_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) if options is None and self._face_recognition is not None else None
         for index, box in enumerate(unique):
             native_box = source_box(prepared, box, frame.shape)
             if native_box is None:
@@ -232,7 +233,8 @@ class FaceRecognizer:
                                                detection=(prepared, [box], attempts, elapsed), include_pose=False)
                 elif self._face_recognition is not None:
                     x, y, w, h = box
-                    result = self._extract_dlib(frame, num_jitters=num_jitters, locations=[(y, x + w, y + h, x)], include_pose=False)
+                    result = self._extract_dlib(frame, num_jitters=num_jitters, locations=[(y, x + w, y + h, x)],
+                                                include_pose=False, rgb=shared_rgb)
                 else:
                     result = self._extract_fallback(frame, boxes=[box])
             except (ValueError, RuntimeError, cv2.error, np.linalg.LinAlgError):
@@ -240,8 +242,9 @@ class FaceRecognizer:
             results.append(result)
         return results
 
-    def _extract_dlib(self, frame: np.ndarray, *, num_jitters: int, locations=None, include_pose=True) -> EmbeddingResult:
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    def _extract_dlib(self, frame: np.ndarray, *, num_jitters: int, locations=None, include_pose=True, rgb=None) -> EmbeddingResult:
+        if rgb is None:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         if locations is None:
             locations = self._face_recognition.face_locations(rgb, number_of_times_to_upsample=1, model="hog")
         if not locations:

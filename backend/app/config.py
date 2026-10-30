@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./attendance.db"
     storage_dir: Path = Path("./storage")
     camera_api_token: str = "change-me-camera-token"
+    auth_session_hours: int = Field(default=8, ge=1, le=72)
     attendance_threshold: float = 0.65
     attendance_margin: float = 0.05
     attendance_min_hits: int = Field(default=3, ge=1, le=20)
@@ -19,6 +20,9 @@ class Settings(BaseSettings):
     enrollment_num_jitters: int = 3
     stream_max_faces_per_frame: int = Field(default=8, ge=1, le=32)
     stream_confirmation_window_seconds: int = Field(default=30, ge=4, le=120)
+    stream_min_observation_interval_seconds: float = Field(default=0.25, ge=0.1, le=5)
+    stream_min_confirmation_seconds: float = Field(default=0.5, ge=0.2, le=10)
+    stream_max_observation_gap_seconds: float = Field(default=10, ge=1, le=120)
     face_detection_backend: Literal["hog", "hybrid", "yunet"] = "hog"
     face_detection_model_path: Path = Path("storage/face-models/face_detection_yunet_2023mar.onnx")
     face_detection_score_threshold: float = Field(default=0.9, ge=0.5, lt=1)
@@ -42,6 +46,12 @@ class Settings(BaseSettings):
     # Sample v2 alongside an enforced v1 without changing its templates/decisions.
     preprocessing_shadow_v2: bool = True
     preprocessing_shadow_sample_rate: float = Field(default=0.1, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def check_confirmation_window(self):
+        if self.stream_min_confirmation_seconds > self.stream_confirmation_window_seconds:
+            raise ValueError("Stream confirmation duration exceeds its evidence window")
+        return self
 
     @model_validator(mode="before")
     @classmethod

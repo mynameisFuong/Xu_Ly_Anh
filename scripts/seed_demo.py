@@ -6,7 +6,7 @@ from sqlalchemy import select
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from backend.app.database import SessionLocal, create_all
-from backend.app.models import Class, ClassEnrollment, ConsentStatus, Student, User, UserRole
+from backend.app.models import Class, ClassEnrollment, ConsentStatus, DeviceClassAccess, Student, User, UserRole
 from backend.app.security import hash_password
 
 
@@ -74,9 +74,12 @@ def main() -> None:
             if exists is None:
                 db.add(ClassEnrollment(class_id=class_.id, student_id=student.id))
 
+        if db.get(DeviceClassAccess, (device_user.id, class_.id)) is None:
+            db.add(DeviceClassAccess(user_id=device_user.id, class_id=class_.id))
+
         db.commit()
         print("Seeded demo data.")
-        print("Admin: username=admin password=admin123 header X-User-Id=1")
+        print("Admin demo: username=admin password=admin123 (existing passwords are preserved)")
         print("Teacher: username=teacher password=teacher123")
         print("Device user: username=device01 password=device123")
     finally:

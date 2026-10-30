@@ -1,6 +1,7 @@
 import csv
 import base64
 import uuid
+import logging
 from datetime import datetime, time, timezone
 from io import BytesIO, StringIO
 from functools import lru_cache
@@ -61,7 +62,12 @@ from backend.app.schemas import (
     UserRead,
 )
 from backend.app.security import (
+    bearer,
+    allowed_class_ids,
+    get_current_user,
     hash_password,
+    issue_session,
+    token_digest,
     require_admin,
     require_teacher_or_admin,
     require_user_or_admin,
@@ -78,6 +84,7 @@ from backend.app.services.face_templates import build_default_recognizer, regist
 from backend.app.services.audit import write_audit
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=4)
@@ -118,14 +125,18 @@ def _save_attendance_evidence(
     *,
     attendance: AttendanceRecord | None,
     image_bytes: bytes,
+    face_box=None,
 ) -> None:
     if attendance is None or attendance.evidence_image_path is not None:
         return
+    from ai_pipeline.evidence import face_evidence
+
+    evidence_bytes = face_evidence(image_bytes, face_box)
 
     storage_dir = get_settings().storage_dir / "attendance_evidence" / f"session-{attendance.session_id}"
     storage_dir.mkdir(parents=True, exist_ok=True)
     image_path = storage_dir / f"attendance-{attendance.id}-student-{attendance.student_id}.jpg"
-    image_path.write_bytes(image_bytes)
+    image_path.write_bytes(evidence_bytes)
     attendance.evidence_image_path = str(image_path)
     db.commit()
     db.refresh(attendance)
@@ -288,7 +299,7 @@ def health() -> dict[str, str]:
 
 @router.get("/dashboard/summary", response_model=DashboardSummaryRead)
 def dashboard_summary(
-    _user: User = Depends(require_teacher_or_admin),
+    _user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> DashboardSummaryRead:
     total_students = db.scalar(select(func.count(Student.id)).where(Student.deleted_at.is_(None))) or 0
@@ -327,21 +338,36 @@ def list_sessions(
     db: Session = Depends(get_db),
 ) -> list[SessionSummaryRead]:
     safe_limit = max(1, min(limit, 100))
-    sessions = db.scalars(select(ClassSession).order_by(ClassSession.start_time.desc()).limit(safe_limit)).all()
+    sessions = db.scalars(select(ClassSession).where(ClassSession.class_id.in_(allowed_class_ids(_user)))
+                          .order_by(ClassSession.start_time.desc()).limit(safe_limit)).all()
     return [_session_summary(db, item) for item in sessions]
 
 
-@router.post("/auth/login")
 def login(username: str, password: str, db: Session = Depends(get_db)) -> dict[str, int | str]:
     user = db.scalar(select(User).where(User.username == username))
-    if user is None or not verify_password(password, user.password_hash):
+    if user is None or not user.is_active or not verify_password(password, user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
-    return {"user_id": user.id, "role": user.role, "full_name": user.full_name}
+    if "$" not in user.password_hash:
+        user.password_hash = hash_password(password)
+    return issue_session(db, user)
 
 
 @router.post("/auth/login-json")
+@router.post("/auth/login")
 def login_json(payload: LoginRequest, db: Session = Depends(get_db)) -> dict[str, int | str]:
     return login(payload.username, payload.password, db)
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(_user: User = Depends(get_current_user), credentials=Depends(bearer),
+           db: Session = Depends(get_db)) -> Response:
+    from backend.app.models import AuthSession
+
+    session = db.get(AuthSession, token_digest(credentials.credentials))
+    if session is not None:
+        db.delete(session)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/users", response_model=UserRead, dependencies=[Depends(require_admin)])
@@ -362,7 +388,7 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)) -> User:
     return user
 
 
-@router.post("/students", response_model=StudentRead, dependencies=[Depends(require_teacher_or_admin)])
+@router.post("/students", response_model=StudentRead, dependencies=[Depends(require_admin)])
 def create_student(payload: StudentCreate, db: Session = Depends(get_db)) -> Student:
     student = Student(**payload.model_dump())
     db.add(student)
@@ -375,7 +401,7 @@ def create_student(payload: StudentCreate, db: Session = Depends(get_db)) -> Stu
     return student
 
 
-@router.get("/students", response_model=list[StudentRead], dependencies=[Depends(require_teacher_or_admin)])
+@router.get("/students", response_model=list[StudentRead], dependencies=[Depends(require_admin)])
 def list_students(db: Session = Depends(get_db)) -> list[Student]:
     return list(db.scalars(select(Student).where(Student.deleted_at.is_(None))).all())
 
@@ -471,12 +497,12 @@ def get_face_template_image(
     return FileResponse(image_path)
 
 
-@router.get("/classes", response_model=list[ClassRead], dependencies=[Depends(require_teacher_or_admin)])
-def list_classes(db: Session = Depends(get_db)) -> list[Class]:
-    return list(db.scalars(select(Class)).all())
+@router.get("/classes", response_model=list[ClassRead])
+def list_classes(db: Session = Depends(get_db), user: User = Depends(require_teacher_or_admin)) -> list[Class]:
+    return list(db.scalars(select(Class).where(Class.id.in_(allowed_class_ids(user)))).all())
 
 
-@router.post("/classes", response_model=ClassRead, dependencies=[Depends(require_teacher_or_admin)])
+@router.post("/classes", response_model=ClassRead, dependencies=[Depends(require_admin)])
 def create_class(payload: ClassCreate, db: Session = Depends(get_db)) -> Class:
     class_ = Class(**payload.model_dump())
     db.add(class_)
@@ -487,6 +513,33 @@ def create_class(payload: ClassCreate, db: Session = Depends(get_db)) -> Class:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Class code already exists") from exc
     db.refresh(class_)
     return class_
+
+
+@router.put("/classes/{class_id}/devices/{user_id}", status_code=204, dependencies=[Depends(require_admin)])
+def grant_device_class_access(class_id: int, user_id: int, db: Session = Depends(get_db)) -> Response:
+    from backend.app.models import DeviceClassAccess
+
+    user = db.get(User, user_id)
+    if user is None or user.role != "user" or not user.is_active or db.get(Class, class_id) is None:
+        raise HTTPException(404, "Active device account or class not found")
+    if db.get(DeviceClassAccess, (user_id, class_id)) is None:
+        db.add(DeviceClassAccess(user_id=user_id, class_id=class_id))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+    return Response(status_code=204)
+
+
+@router.delete("/classes/{class_id}/devices/{user_id}", status_code=204, dependencies=[Depends(require_admin)])
+def revoke_device_class_access(class_id: int, user_id: int, db: Session = Depends(get_db)) -> Response:
+    from backend.app.models import DeviceClassAccess
+
+    access = db.get(DeviceClassAccess, (user_id, class_id))
+    if access is not None:
+        db.delete(access)
+        db.commit()
+    return Response(status_code=204)
 
 
 @router.post(
@@ -607,7 +660,7 @@ def list_open_attendance_requests(
 ) -> list[AttendanceRequestRead]:
     sessions = db.scalars(
         select(ClassSession)
-        .where(ClassSession.status == SessionStatus.OPEN.value)
+        .where(ClassSession.status == SessionStatus.OPEN.value, ClassSession.class_id.in_(allowed_class_ids(_user)))
         .order_by(ClassSession.start_time.desc())
     ).all()
     return [_attendance_request_read(db, item) for item in sessions]
@@ -768,6 +821,8 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Session is not open")
 
     recognizer = build_default_recognizer()
+    if recognizer.distance_metric != "euclidean":
+        raise HTTPException(503, "Thiếu engine Face ID. Cài engine theo README trong môi trường backend.")
     image_base64 = payload.image_base64
     if "," in image_base64:
         image_base64 = image_base64.split(",", 1)[1]
@@ -898,7 +953,10 @@ def _scan_frame(session_id: int, payload: FrameScanRequest, db: Session, *, dry_
     if attendance is None:
         return FrameScanResponse(decision="unknown", message="Chưa lưu được điểm danh. Vui lòng kiểm tra danh sách lớp hoặc liên hệ giảng viên.",
                                  face_box=result.face_box)
-    _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes)
+    try:
+        _save_attendance_evidence(db, attendance=attendance, image_bytes=image_bytes, face_box=result.face_box)
+    except (OSError, ValueError):
+        logger.warning("Attendance saved but face evidence could not be stored")
     message = "Đúng giờ"
     if attendance is not None and attendance.status == "late":
         message = f"Trễ {attendance.late_minutes} phút"
@@ -994,6 +1052,9 @@ def _pipeline_status(*, load_engine: bool = True) -> dict:
         "stream_recognition": True,
         "stream_max_faces_per_frame": settings.stream_max_faces_per_frame,
         "stream_confirmation_hits": settings.attendance_min_hits,
+        "stream_min_observation_interval_seconds": settings.stream_min_observation_interval_seconds,
+        "stream_min_confirmation_seconds": settings.stream_min_confirmation_seconds,
+        "attendance_engine_ready": bool(recognizer and recognizer.distance_metric == "euclidean"),
         "preprocessing_version": settings.preprocessing_version,
         "preprocessing_profile": options.profile if options else None,
         "shadow_candidate_profile": candidate.profile if candidate else None,

@@ -86,6 +86,21 @@ class Student(Base):
     face_templates: Mapped[list["FaceTemplate"]] = relationship(back_populates="student")
 
 
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DeviceClassAccess(Base):
+    __tablename__ = "device_class_access"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    class_id: Mapped[int] = mapped_column(ForeignKey("classes.id"), primary_key=True)
+
+
 class Class(Base):
     __tablename__ = "classes"
 

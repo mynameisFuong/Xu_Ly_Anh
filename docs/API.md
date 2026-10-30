@@ -5,9 +5,19 @@ OpenAPI đầy đủ ở /docs hoặc /openapi.json. Liveness đã được gỡ
 
 ## Xác thực
 
-Web/desktop dùng X-User-Id theo cơ chế tài khoản demo. Worker tin cậy dùng
-X-Camera-Token; token không được đưa vào mã frontend. Quyền tài khoản,
-consent, lớp học và trạng thái phiên vẫn được kiểm tra phía backend.
+Web/desktop đăng nhập bằng `POST /auth/login-json` (hoặc `/auth/login`) với JSON
+`{"username":"admin","password":"..."}`. Response có `access_token`,
+`token_type`, `expires_at`, `user_id`, `role`, `full_name`. Gửi
+`Authorization: Bearer <access_token>` ở các request sau. `X-User-Id` không còn
+được dùng để xác thực. `POST /auth/logout` thu hồi token hiện tại. Phiên mặc
+định hết hạn sau tám giờ; database chỉ lưu hash của token. Mật khẩu mới dùng
+PBKDF2 có salt; mật khẩu SHA-256 cũ được nâng cấp khi đăng nhập thành công.
+
+Giảng viên chỉ truy cập phiên/lớp được giao; tài khoản thiết bị chỉ truy cập
+lớp được cấp quyền. Admin cấp/thu hồi quyền bằng
+`PUT` / `DELETE /classes/{class_id}/devices/{user_id}`. Các danh sách lớp,
+phiên và yêu cầu đang mở được lọc theo quyền. Worker tin cậy vẫn dùng
+`X-Camera-Token`; đây là quyền riêng dành cho worker backend, không đưa vào frontend.
 
 ## Trạng thái pipeline
 
@@ -26,7 +36,7 @@ Pipeline còn trả `stream_recognition=true`, `stream_max_faces_per_frame` và
 
 ## Stream nhiều khuôn mặt
 
-Web/desktop dùng `POST /sessions/{id}/scan-stream` với `X-User-Id`.
+Web/desktop dùng `POST /sessions/{id}/scan-stream` với bearer token.
 Worker dùng `POST /sessions/{id}/camera-scan-stream?dry_run=false` với
 `X-Camera-Token`. Hai endpoint dùng cùng body:
 
@@ -45,7 +55,9 @@ là 2,8 triệu ký tự. Khi nhận response, chụp frame live mới rồi g�
 không xếp hàng các frame cũ và không dừng sau khi điểm danh thành công.
 
 Response có `frame_id`, `frame_width`, `frame_height`, `faces`, `message`,
-`processing_ms`, `next_frame_delay_ms`. Mỗi phần tử `faces` gồm:
+`processing_ms`, `timings_ms`, `next_frame_delay_ms`. `timings_ms` tách
+`inference`, `gallery`, `matching`; `processing_ms` gồm cả xác nhận và ghi DB.
+Mỗi phần tử `faces` gồm:
 
 - Các trường của kết quả một mặt: `decision`, `message`, `face_box`,
   `student_id`, `student_code`, `full_name`, `attendance`, `already_recorded`,
@@ -56,7 +68,9 @@ Response có `frame_id`, `frame_width`, `frame_height`, `faces`, `message`,
   không phải danh tính sinh viên.
 
 Mỗi mặt được xác nhận độc lập bằng các lần so khớp mới. Mặc định cần ba lần
-trong cửa sổ 30 giây; không phải chờ đủ 30 giây. `pending`, `unknown`,
+trong cửa sổ 30 giây; các lần tính phiếu cách nhau ít nhất 0,25 giây và bằng
+chứng phải kéo dài ít nhất 0,5 giây. Gián đoạn quan sát quá 10 giây làm mất
+phiếu cũ. Không phải chờ đủ 30 giây. `pending`, `unknown`,
 `low_confidence`, `review` đều hiển thị vàng. Chỉ `recognized` cùng `attendance`
 khác null mới được báo xanh/ghi log thành công. Tên/MSSV chưa được trả trong
 giai đoạn chờ xác nhận. Khung đã mất hoặc quá hạn phải được xóa; client không
@@ -68,12 +82,18 @@ Một người chỉ có một bản ghi điểm danh trong phiên; bản ghi c�
 thủ công được giữ nguyên; trạng thái cần giảng viên kiểm tra trả `review`.
 `dry_run=true` xác nhận riêng, không dùng chung phiếu với luồng thật và không ghi DB.
 
-Frame lặp/cũ trả 409; luồng đang có request xử lý hoặc hết slot trả 429. Client
+Frame lặp/cũ hoặc trùng nội dung trong 128 frame gần nhất trả 409;
+luồng đang có request xử lý hoặc hết slot trả 429. Đây không phải PAD: ảnh/video
+được sửa hoặc mã hóa lại vẫn cần cơ chế chống giả mạo riêng. Client
 tự thử lại với frame mới sau một khoảng nghỉ, không tăng phiếu bằng cách gửi
 lại cùng `frame_id`. Base64/ảnh hỏng trả 400, payload sai/vượt giới hạn trả 422,
 phiên không tồn tại trả 404, phiên đóng trả 409. Khi phiên đóng, dừng gửi frame.
 
 Xem [hướng dẫn vận hành và giới hạn hiệu năng](STREAM_RECOGNITION.md).
+
+Ảnh minh chứng mới được cắt theo box của người đã xác nhận và mã hóa JPEG,
+thay vì lưu toàn bộ frame. Ảnh đã lưu trước đó được giữ nguyên. Engine histogram
+dự phòng không được dùng để tự động ghi điểm danh qua các API scan.
 
 ## API một mặt tương thích cũ
 

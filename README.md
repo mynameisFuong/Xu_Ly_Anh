@@ -171,12 +171,18 @@ Luong user/device:
 
 Hien tai desktop app da ho tro diem danh sinh vien. Diem danh giang vien nen lam o buoc tiep theo bang cach tach doi tuong nhan dien thanh `Person`/`PersonFaceTemplates` dung chung cho sinh vien va giang vien, thay vi gan tat ca vao bang `Students`.
 
-Mac dinh demo dung header:
+Web/desktop dùng token trả về từ `POST /auth/login-json` với JSON username/password.
+Các request sau dùng header:
 
 ```text
-X-User-Id: 1
+Authorization: Bearer <access_token>
 X-Camera-Token: change-me-camera-token
 ```
+
+`X-Camera-Token` chỉ dành cho worker tin cậy, không dùng trong frontend.
+Đăng xuất thu hồi token; phiên mặc định hết hạn sau tám giờ. Nếu trình duyệt
+còn tài khoản demo cũ, tải lại trang và đăng nhập lại một lần.
+Xem [nâng cấp độ tin cậy và đánh giá nhiều người](docs/ATTENDANCE_RELIABILITY.md).
 
 ## Thu Nghiem
 

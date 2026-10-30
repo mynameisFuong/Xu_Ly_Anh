@@ -13,7 +13,8 @@ from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from ai_pipeline.recognition import ENROLLMENT_POSES, match_embedding
+from ai_pipeline.recognition import ENROLLMENT_POSES
+from ai_pipeline.gallery import CompiledGallery
 from ai_pipeline.streaming import FaceObservation, StaleFrameError, StreamBusyError, StreamStateStore
 from backend.app.config import get_settings
 from backend.app.models import AttendanceRecord, ClassEnrollment, ClassSession, ConsentStatus, FaceTemplate, Student
@@ -24,8 +25,9 @@ logger = logging.getLogger(__name__)
 
 
 @lru_cache(maxsize=4)
-def stream_states(min_hits, window_seconds):
-    return StreamStateStore(min_hits, window_seconds)
+def stream_states(min_hits, window_seconds, min_interval=0.25, min_duration=0.5, max_gap=10):
+    return StreamStateStore(min_hits, window_seconds, min_interval_seconds=min_interval,
+                            min_confirmation_seconds=min_duration, max_gap_seconds=max_gap)
 
 
 def _gallery(db, class_id, model_version, dimension):
@@ -87,14 +89,23 @@ def scan_stream_frame(db, *, session_id, payload, owner, recognizer, save_eviden
         raise HTTPException(404, "Session not found")
     if class_session.status != "open":
         raise HTTPException(409, "Session is not open")
+    if recognizer.distance_metric != "euclidean":
+        raise HTTPException(503, "Thiếu engine Face ID. Cài engine theo README trong môi trường backend.")
     try:
         image_bytes = base64.b64decode(payload.image_base64.split(",", 1)[-1], validate=True)
     except ValueError as exc:
         raise HTTPException(400, "Invalid image data") from exc
-    store = stream_states(settings.attendance_min_hits, settings.stream_confirmation_window_seconds)
+    store = stream_states(settings.attendance_min_hits, settings.stream_confirmation_window_seconds,
+                          settings.stream_min_observation_interval_seconds,
+                          settings.stream_min_confirmation_seconds, settings.stream_max_observation_gap_seconds)
     key = (session_id, owner, payload.camera_id, payload.stream_id, recognizer.model_version, dry_run)
     try:
         with store.checkout(key, payload.frame_id) as state:
+            digest = sha256(image_bytes).hexdigest()
+            if digest in state.frame_digests:
+                raise StaleFrameError("Repeated image content; capture a fresh camera frame")
+            state.frame_digests.append(digest)
+            inference_started = perf_counter()
             batch = recognizer.extract_frame_embeddings(
                 image_bytes, max_faces=settings.stream_max_faces_per_frame,
                 offset=payload.frame_id * settings.stream_max_faces_per_frame,
@@ -107,20 +118,24 @@ def scan_stream_frame(db, *, session_id, payload, owner, recognizer, save_eviden
                 state.tracker.clear()
                 state.dimensions = dimensions
             faces = [face for face in batch.faces if face.face_box is not None]
+            inference_ms = (perf_counter() - inference_started) * 1000
+            gallery_started = perf_counter()
             dimension = 128 if recognizer.distance_metric == "euclidean" else 256
             templates, students = _gallery(db, class_session.class_id, recognizer.model_version, dimension) if faces else ({}, {})
-            matches = []
-            for face in faces:
-                valid = face.accepted and face.embedding.shape == (dimension,) and np.isfinite(face.embedding).all()
-                matches.append(match_embedding(
-                    face.embedding, templates,
-                    threshold=settings.face_distance_threshold if dimension == 128 else settings.attendance_threshold,
-                    margin=settings.face_distance_margin if dimension == 128 else settings.attendance_margin,
-                    metric=recognizer.distance_metric,
-                ) if valid and templates else None)
+            gallery = CompiledGallery(templates, dimension, metric=recognizer.distance_metric)
+            gallery_ms = (perf_counter() - gallery_started) * 1000
+            matching_started = perf_counter()
+            matches = gallery.match_many(
+                [face.embedding if face.accepted else np.empty(0) for face in faces],
+                threshold=settings.face_distance_threshold if dimension == 128 else settings.attendance_threshold,
+                margin=settings.face_distance_margin if dimension == 128 else settings.attendance_margin,
+            )
+            matching_ms = (perf_counter() - matching_started) * 1000
             counts = Counter(match.student_id for match in matches if match is not None and match.student_id is not None)
             observations = [FaceObservation(face.face_box, match.student_id if match else None,
-                                             processed=face.reason != "Waiting for face processing")
+                                             processed=face.reason != "Waiting for face processing",
+                                             embedding=(face.embedding if face.accepted and face.embedding.shape == (128,)
+                                                        and np.isfinite(face.embedding).all() else None))
                             for face, match in zip(faces, matches)]
             confirmations = state.tracker.update(observations, frame_id=payload.frame_id, now=monotonic())
             results = []
@@ -155,8 +170,8 @@ def scan_stream_frame(db, *, session_id, payload, owner, recognizer, save_eviden
                         continue
                     if not already:
                         try:
-                            save_evidence(db, attendance=attendance, image_bytes=image_bytes)
-                        except OSError:
+                            save_evidence(db, attendance=attendance, image_bytes=image_bytes, face_box=face.face_box)
+                        except (OSError, ValueError):
                             logger.warning("Could not save stream attendance evidence", exc_info=True)
                     needs_review = attendance.status not in {"present", "late"}
                     message = ("Đã có kết quả điều chỉnh; vui lòng liên hệ giảng viên" if needs_review else
@@ -171,7 +186,9 @@ def scan_stream_frame(db, *, session_id, payload, owner, recognizer, save_eviden
             if reasons:
                 message += " · " + reasons[0]
             return StreamScanResponse(frame_id=payload.frame_id, frame_width=batch.width, frame_height=batch.height,
-                                      faces=results, message=message, processing_ms=round((perf_counter() - started) * 1000, 1))
+                                      faces=results, message=message, processing_ms=round((perf_counter() - started) * 1000, 1),
+                                      timings_ms={"inference": round(inference_ms, 2), "gallery": round(gallery_ms, 2),
+                                                  "matching": round(matching_ms, 2)})
     except StaleFrameError as exc:
         raise HTTPException(409, str(exc)) from exc
     except StreamBusyError as exc:

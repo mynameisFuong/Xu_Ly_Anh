@@ -17,7 +17,7 @@ def browser_page(request):
         ])
         context = browser.new_context(permissions=["camera"])
         context.add_init_script("""sessionStorage.setItem('face-attendance-account', JSON.stringify({
-          user_id: 1, role: 'admin', full_name: 'Test Admin'
+          access_token: 'test-token', user_id: 1, role: 'admin', full_name: 'Test Admin'
         }));""")
         context.add_init_script("""
           // Deterministic live frames: stable scene plus a changing corner marker.
@@ -126,6 +126,53 @@ def test_manual_controls_still_work_without_scanning(browser_page):
     page.locator('[data-manual="1"]').click()
     expect(page.locator("#manualDialog")).to_be_visible()
     assert scans == []
+
+
+def test_browser_login_uses_bearer_and_logout_revokes_session(browser_page):
+    original, expect = browser_page
+    context = original.context.browser.new_context()
+    page = context.new_page()
+    root = Path(__file__).resolve().parents[1] / "frontend"
+    calls = []
+
+    def handle(route):
+        request = route.request
+        path = request.url.split("localhost", 1)[1]
+        if path in {"/demo/login", "/demo"}:
+            route.fulfill(path=str(root / ("login.html" if path.endswith("login") else "attendance.html")),
+                          content_type="text/html")
+        elif path.startswith("/demo/assets/"):
+            name = path.rsplit("/", 1)[1]
+            route.fulfill(path=str(root / name), content_type="text/javascript" if name.endswith(".js") else "text/css")
+        elif path == "/auth/login-json":
+            assert request.post_data_json == {"username": "admin", "password": "admin123"}
+            route.fulfill(json={"access_token": "browser-token", "user_id": 1, "role": "admin", "full_name": "Admin"})
+        elif path == "/attendance-requests/open":
+            assert request.headers.get("authorization") == "Bearer browser-token"
+            assert "x-user-id" not in request.headers
+            calls.append("authenticated")
+            route.fulfill(json=[])
+        elif path == "/auth/logout":
+            assert request.headers.get("authorization") == "Bearer browser-token"
+            calls.append("logout")
+            route.fulfill(status=204)
+        else:
+            route.fulfill(status=404, json={"detail": "Unexpected test route"})
+
+    try:
+        page.route("http://localhost/**", handle)
+        page.goto("http://localhost/demo/login")
+        page.locator("#username").fill("admin")
+        page.locator("#password").fill("admin123")
+        page.locator('#loginForm button[type="submit"]').click()
+        expect(page.locator("#logout")).to_be_visible()
+        expect(page.locator("#activeSession")).to_be_visible()
+        page.locator("#logout").click()
+        expect(page).to_have_url("http://localhost/demo/login")
+        assert page.evaluate("sessionStorage.getItem('face-attendance-account')") is None
+        assert calls == ["authenticated", "logout"]
+    finally:
+        context.close()
 
 
 def test_saved_attendance_keeps_streaming_and_logs_each_person_once(browser_page):

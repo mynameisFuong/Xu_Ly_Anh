@@ -254,6 +254,7 @@ class StreamScanResponse(BaseModel):
     faces: list[StreamFaceResult]
     message: str
     processing_ms: float
+    timings_ms: dict[str, float] = Field(default_factory=dict)
     next_frame_delay_ms: int = 100
 
 

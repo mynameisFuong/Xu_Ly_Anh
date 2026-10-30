@@ -48,9 +48,17 @@ Danh tính và điểm danh luôn dựa vào embedding mới cùng xác nhận p
 ATTENDANCE_MIN_HITS=3
 STREAM_CONFIRMATION_WINDOW_SECONDS=30
 STREAM_MAX_FACES_PER_FRAME=8
+STREAM_MIN_OBSERVATION_INTERVAL_SECONDS=0.25
+STREAM_MIN_CONFIRMATION_SECONDS=0.5
+STREAM_MAX_OBSERVATION_GAP_SECONDS=10
 ```
 
 Ba lần so khớp mới là số lần xác nhận mặc định, **không phải chờ đủ 30 giây**.
+Các phiếu phải cách nhau ít nhất 0,25 giây và kéo dài ít nhất 0,5 giây.
+Tracker dùng thêm dự đoán vị trí và khoảng cách embedding để ghép người;
+ghép mơ hồ, đổi người hoặc gián đoạn quá 10 giây phải xây lại bằng chứng.
+Ảnh trùng nội dung trong bộ nhớ 128 frame không được tính thêm phiếu dù đổi frame_id.
+Các điều kiện này tăng tính nhất quán của xác nhận, không chứng minh người thật.
 Cửa sổ 30 giây cho phép CPU xử lý nhiều mặt mà phiếu xác nhận không hết hạn
 quá sớm. Mặc định tối đa tám mặt được encode mỗi frame; các box khác vẫn có
 khung chờ và được luân phiên xử lý ở frame sau. Nếu đám đông lớn/CPU yếu, cần
@@ -61,6 +69,11 @@ khi không hoạt động. Mỗi stream chỉ có một request đang xử lý; 
 hoặc cũ bị từ chối, không tăng số phiếu xác nhận. Người/stream/camera/model khác
 nhau không chia sẻ phiếu. Cùng danh tính xuất hiện ở hai box trong một frame
 không được tính thành hai lần xác nhận.
+
+So khớp dùng gallery dạng ma trận, gom các mặt trong cùng frame và chia block
+để giới hạn bộ nhớ tạm. Gallery và consent vẫn đọc từ DB mỗi frame; không cache
+quyền hoặc danh tính qua các lần thu hồi đồng ý. API có timings riêng cho suy luận,
+đọc/chuẩn bị gallery và so khớp để xác định đúng nút thắt trước khi thêm cache.
 
 Phiếu xác nhận nằm trong bộ nhớ tiến trình backend. Cấu hình chạy hiện tại dùng
 một tiến trình; nếu triển khai nhiều worker/replica, cần định tuyến cố định cùng

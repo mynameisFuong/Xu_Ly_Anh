@@ -39,6 +39,7 @@ class ApiClient:
     def __init__(self, base_url: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.user_id: int | None = None
+        self.access_token: str | None = None
         self.role: str | None = None
         self.full_name: str | None = None
 
@@ -56,21 +57,30 @@ class ApiClient:
 
     def login(self, username: str, password: str) -> dict:
         response = requests.post(
-            f"{self.base_url}/auth/login",
-            params={"username": username, "password": password},
+            f"{self.base_url}/auth/login-json",
+            json={"username": username, "password": password},
             timeout=10,
         )
         self._raise_for_status(response)
         data = response.json()
         self.user_id = int(data["user_id"])
+        self.access_token = data["access_token"]
         self.role = str(data["role"])
         self.full_name = str(data["full_name"])
         return data
 
     def headers(self) -> dict[str, str]:
-        if self.user_id is None:
+        if not self.access_token:
             raise RuntimeError("Not logged in")
-        return {"X-User-Id": str(self.user_id)}
+        return {"Authorization": f"Bearer {self.access_token}"}
+
+    def logout(self) -> None:
+        if self.access_token:
+            try:
+                requests.post(f"{self.base_url}/auth/logout", headers=self.headers(), timeout=5)
+            finally:
+                self.access_token = None
+                self.user_id = None
 
     def get(self, path: str) -> dict | list:
         response = requests.get(f"{self.base_url}{path}", headers=self.headers(), timeout=10)
@@ -119,6 +129,11 @@ class App:
             child.destroy()
 
     def _build_login(self) -> None:
+        self.camera_running = False
+        try:
+            self.api.logout()
+        except requests.RequestException:
+            pass
         self._clear()
         frame = Frame(self.root, padx=24, pady=24)
         frame.pack(fill=BOTH, expand=True)

@@ -4,6 +4,53 @@ import pytest
 from ai_pipeline.streaming import FaceObservation, MultiFaceTracker, StaleFrameError, StreamBusyError, StreamStateStore
 
 
+def test_rapid_frames_do_not_count_as_independent_observations():
+    tracker = MultiFaceTracker(min_hits=3)
+    face = FaceObservation((0, 0, 100, 100), 1)
+    for frame_id, now in enumerate((0, 0.01, 0.02, 0.03)):
+        result = tracker.update([face], frame_id=frame_id, now=now)[0]
+        assert result.hits == 1 and not result.confirmed
+    assert not tracker.update([face], frame_id=4, now=0.3)[0].confirmed
+    assert tracker.update([face], frame_id=5, now=0.6)[0].confirmed
+
+
+def test_long_unobserved_gap_discards_old_evidence():
+    tracker = MultiFaceTracker(min_hits=3, max_gap_seconds=2)
+    face = FaceObservation((0, 0, 100, 100), 1)
+    tracker.update([face], frame_id=0, now=0)
+    previous = tracker.update([face], frame_id=1, now=1)[0]
+    returned = tracker.update([face], frame_id=2, now=4)[0]
+    assert returned.track_id != previous.track_id and returned.hits == 1 and not returned.confirmed
+
+
+def test_longer_confirmation_duration_can_finish_without_sliding_away_early_evidence():
+    tracker = MultiFaceTracker(min_hits=3, min_confirmation_seconds=2)
+    face = FaceObservation((0, 0, 100, 100), 1)
+    for index in range(9):
+        result = tracker.update([face], frame_id=index, now=index * 0.25)[0]
+        assert result.confirmed == (index == 8)
+    assert result.hits == 3
+
+
+def test_appearance_change_cannot_inherit_votes_even_when_matcher_returns_same_identity():
+    tracker = MultiFaceTracker(min_hits=2)
+    box = (0, 0, 100, 100)
+    first = tracker.update([FaceObservation(box, 1, embedding=np.zeros(128))], frame_id=0, now=0)[0]
+    second = tracker.update([FaceObservation(box, 1, embedding=np.ones(128))], frame_id=1, now=1)[0]
+    assert second.track_id != first.track_id and not second.confirmed
+
+
+def test_crossing_faces_keep_independent_evidence_using_appearance():
+    tracker = MultiFaceTracker(min_hits=3)
+    left, right = (0, 0, 100, 100), (60, 0, 100, 100)
+    first = tracker.update([FaceObservation(left, 1, embedding=np.zeros(128)),
+                            FaceObservation(right, 2, embedding=np.ones(128))], frame_id=0, now=0)
+    swapped = tracker.update([FaceObservation(left, 2, embedding=np.ones(128)),
+                              FaceObservation(right, 1, embedding=np.zeros(128))], frame_id=1, now=1)
+    assert swapped[0].track_id == first[1].track_id and swapped[1].track_id == first[0].track_id
+    assert all(item.hits == 2 and not item.confirmed for item in swapped)
+
+
 def test_people_are_confirmed_independently_and_unknown_does_not_reset_other_person():
     tracker = MultiFaceTracker(min_hits=3)
     a, b = (10, 20, 90, 100), (140, 20, 90, 100)
