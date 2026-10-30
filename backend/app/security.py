@@ -14,7 +14,17 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    return hmac.compare_digest(hash_password(password), password_hash)
+    try:
+        if "$" not in password_hash:
+            return hmac.compare_digest(hash_password(password), password_hash)
+        # Local databases may already contain hashes written by the PBKDF2 upgrade.
+        algorithm, rounds, salt, digest = password_hash.split("$")
+        if algorithm != "pbkdf2_sha256" or not 100_000 <= int(rounds) <= 2_000_000:
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), int(rounds)).hex()
+        return hmac.compare_digest(actual, digest)
+    except (ValueError, TypeError):
+        return False
 
 
 def get_current_user(x_user_id: int = Header(...), db: Session = Depends(get_db)) -> User:
