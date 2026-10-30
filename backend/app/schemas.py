@@ -1,6 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def utc_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 class UserCreate(BaseModel):
@@ -107,10 +113,14 @@ class SessionCreate(BaseModel):
     planned_end_time: datetime | None = None
     late_grace_minutes: int = Field(default=0, ge=0, le=180)
 
+    _utc_times = field_validator("start_time", "expected_start_time", "planned_end_time")(utc_datetime)
+
 
 class SessionPolicyUpdate(BaseModel):
     expected_start_time: datetime
     late_grace_minutes: int = Field(default=0, ge=0, le=180)
+
+    _utc_times = field_validator("expected_start_time")(utc_datetime)
 
 
 class SessionRead(BaseModel):
@@ -125,6 +135,8 @@ class SessionRead(BaseModel):
     late_grace_minutes: int
     end_time: datetime | None
     status: str
+
+    _utc_times = field_validator("start_time", "expected_start_time", "planned_end_time", "end_time")(utc_datetime)
 
 
 class AttendanceRequestStudent(BaseModel):
@@ -142,6 +154,8 @@ class AttendanceRequestCreate(BaseModel):
     planned_end_time: datetime
     late_grace_minutes: int = Field(default=0, ge=0, le=180)
 
+    _utc_times = field_validator("expected_start_time", "planned_end_time")(utc_datetime)
+
 
 class AttendanceRequestRead(BaseModel):
     session_id: int
@@ -155,6 +169,8 @@ class AttendanceRequestRead(BaseModel):
     status: str
     student_count: int
 
+    _utc_times = field_validator("expected_start_time", "planned_end_time")(utc_datetime)
+
 
 class RecognitionEventCreate(BaseModel):
     camera_id: str = "camera-0"
@@ -165,6 +181,8 @@ class RecognitionEventCreate(BaseModel):
     frame_time: datetime | None = None
     model_version: str
     idempotency_key: str
+
+    _utc_times = field_validator("frame_time")(utc_datetime)
 
 
 class RecognitionEventRead(BaseModel):
@@ -177,6 +195,8 @@ class RecognitionEventRead(BaseModel):
     candidate_score: float | None
     decision: str
     created_at: datetime
+
+    _utc_times = field_validator("created_at")(utc_datetime)
 
 
 class AttendanceManualUpdate(BaseModel):
@@ -199,6 +219,8 @@ class AttendanceRead(BaseModel):
     evidence_image_url: str | None = None
     updated_by: int | None
 
+    _utc_times = field_validator("recorded_at")(utc_datetime)
+
 
 class AttendanceBoardRow(BaseModel):
     student_id: int
@@ -212,6 +234,8 @@ class AttendanceBoardRow(BaseModel):
     alert: str
     evidence_image_url: str | None = None
 
+    _utc_times = field_validator("recorded_at")(utc_datetime)
+
 
 class AttendanceBoardRead(BaseModel):
     session_id: int
@@ -219,6 +243,8 @@ class AttendanceBoardRead(BaseModel):
     expected_start_time: datetime | None
     late_grace_minutes: int
     rows: list[AttendanceBoardRow]
+
+    _utc_times = field_validator("expected_start_time")(utc_datetime)
 
 
 class AttendanceStatsRead(BaseModel):
@@ -310,6 +336,7 @@ class FaceEnrollmentScanRequest(BaseModel):
     image_base64: str = Field(max_length=2_800_000)
     target_pose: str
     neutral_pitch: float | None = None
+    enrollment_id: str | None = Field(default=None, min_length=32, max_length=32)
 
 
 class FaceEnrollmentProgress(BaseModel):
@@ -350,3 +377,5 @@ class SessionSummaryRead(BaseModel):
     late_count: int
     absent_count: int
     attendance_rate: float
+
+    _utc_times = field_validator("start_time", "expected_start_time", "end_time")(utc_datetime)

@@ -3,7 +3,8 @@
 Ngày lập: 30/10/2026. Phạm vi: xử lý ảnh cổ điển có cơ sở học thuật,
 giữ engine nhận diện dlib ResNet 128D và cơ chế điểm danh hiện có.
 Kế hoạch đã được duyệt triển khai. Các nhánh pre-v2 và công cụ đánh giá đã được
-cài đặt; rollout mặc định giữ pre-v1 để tương thích mẫu cũ và lấy mẫu đối chiếu v2.
+cài đặt; `.env.example` hiện mặc định preprocessing off. Khi enforce v1 có thể
+lấy mẫu đối chiếu v2; không tự chuyển template cũ sang v2.
 Chưa có đủ dữ liệu camera để khẳng định mức cải thiện accuracy hoặc chuyển toàn bộ.
 
 ## Trạng thái sau triển khai
@@ -14,10 +15,10 @@ Chưa có đủ dữ liệu camera để khẳng định mức cải thiện acc
 | P1: EXIF/hình học, chất lượng gốc, ROI gamma/CLAHE, profile v2 | Đã cài đặt và kiểm thử; v1 giữ nguyên hash. Dlib tự căn face chip mặc định. |
 | P1: baseline/ablation recognition | Đã có CLI tách session/identity, FMR/FNMR/FPIR, độ trễ, bootstrap theo người; cần bộ camera thật để nghiệm thu. |
 | P2: median/bilateral, thông báo chụp lại, shadow lấy mẫu | Đã cài đặt; denoise mặc định off. Xác nhận nhiều frame mới và reset khi đổi người vẫn được giữ. |
-| P2: chọn frame/cache camera riêng | Chưa bật thêm tracker hoặc tái dùng box/embedding; cần đo camera thực trước khi quyết định chiến lược, tránh giữ kết quả người trước. |
+| P2: chọn frame/cache camera riêng | Đã có tracker theo geometry, chuyển động và embedding; xác nhận danh tính vẫn cần so khớp frame mới. Cần đo camera thực. |
 | P3: Retinex/Tan–Triggs | Đã cài đặt ở nhánh benchmark độc lập; không có công tắc production. |
 | P3: hiệu chuẩn/undistort | Chưa áp dụng: chưa có intrinsics đo của camera. Không tự tạo tham số giả định. |
-| Chuyển bộ mẫu | Có CLI kiểm tra chỉ đọc. DB local hiện có 1 bộ đủ năm góc v1, 0 bộ v2; không sửa/đổi nhãn mẫu cũ. |
+| Chuyển bộ mẫu | Có CLI kiểm tra chỉ đọc. Inventory từng máy thay đổi theo dữ liệu; không tự sửa/đổi nhãn mẫu cũ. |
 
 Chi tiết lệnh chạy, cấu trúc dữ liệu và rollback:
 [PREPROCESSING_BENCHMARK.md](PREPROCESSING_BENCHMARK.md).

@@ -15,7 +15,7 @@ def browser_page(request):
         browser = runtime.chromium.launch(channel="chrome", headless=True, args=[
             "--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream",
         ])
-        context = browser.new_context(permissions=["camera"])
+        context = browser.new_context(permissions=["camera"], timezone_id="Asia/Ho_Chi_Minh")
         context.add_init_script("""sessionStorage.setItem('face-attendance-account', JSON.stringify({
           access_token: 'test-token', user_id: 1, role: 'admin', full_name: 'Test Admin'
         }));""")
@@ -41,7 +41,8 @@ def browser_page(request):
         browser.close()
 
 
-def serve_ui(page, *, recognized=False, recorded=True, transient_miss=False, unexpected=None, scene=None):
+def serve_ui(page, *, recognized=False, recorded=True, transient_miss=False, unexpected=None, scene=None,
+             start_time="2026-10-29T13:00:00Z", readiness=None, policy_updates=None):
     root = Path(__file__).resolve().parents[1] / "frontend"
     scans = []
 
@@ -57,7 +58,13 @@ def serve_ui(page, *, recognized=False, recorded=True, transient_miss=False, une
             return
         if path == "/attendance-requests/open":
             body = [{"session_id": 1, "class_code": "TEST01", "class_name": "Test Class",
-                     "expected_start_time": "2026-10-29T13:00:00Z", "late_grace_minutes": 5}]
+                     "expected_start_time": start_time, "late_grace_minutes": 5}]
+        elif path.endswith("/face-readiness"):
+            body = readiness or {"ready": 1, "total": 1, "engine_ready": True}
+        elif path.endswith("/policy") and request.method == "PUT":
+            if policy_updates is not None:
+                policy_updates.append(request.post_data_json)
+            body = request.post_data_json
         elif path.endswith("/attendance-board"):
             body = {"rows": [{"student_id": 1, "student_code": "TEST001", "full_name": "Synthetic Test",
                               "class_label": "TEST01", "status": "pending", "recorded_at": None, "alert": ""}]}
@@ -126,6 +133,35 @@ def test_manual_controls_still_work_without_scanning(browser_page):
     page.locator('[data-manual="1"]').click()
     expect(page.locator("#manualDialog")).to_be_visible()
     assert scans == []
+
+
+def test_policy_uses_utc_storage_and_roundtrips_local_time(browser_page):
+    page, expect = browser_page
+    updates = []
+    serve_ui(page, start_time="2026-10-31T00:00:00", policy_updates=updates)
+    expect(page.locator("#policyStart")).to_have_value("2026-10-31T07:00")
+    page.locator("#savePolicy").click()
+    expect(page.locator("#notice")).to_contain_text("Đã cập nhật")
+    assert updates[0]["expected_start_time"] == "2026-10-31T00:00:00.000Z"
+    page.reload()
+    expect(page.locator("#policyStart")).to_have_value("2026-10-31T07:00")
+
+
+def test_readiness_warning_and_camera_controls_do_not_stop_manual_attendance(browser_page):
+    page, expect = browser_page
+    serve_ui(page, readiness={"ready": 0, "total": 5, "engine_ready": True})
+    expect(page.locator("#faceReadiness")).to_contain_text("0/5 sinh viên có Face ID hợp lệ")
+    expect(page.locator("#faceReadiness a")).to_have_attribute("href", "/demo/faces")
+    start_scan(page)
+    expect(page.locator("#scanCamera")).to_have_text("Tắt camera")
+    page.locator("#scanToggle").click()
+    expect(page.locator("#scanFeedback")).to_contain_text("Đã dừng quét")
+    page.evaluate("window.cameraTrack = document.querySelector('#scanVideo').srcObject.getVideoTracks()[0]")
+    page.locator("#scanCamera").click()
+    assert page.evaluate("window.cameraTrack.readyState") == "ended"
+    expect(page.locator("#scanCamera")).to_have_text("Bật camera")
+    page.locator('[data-manual="1"]').click()
+    expect(page.locator("#manualDialog")).to_be_visible()
 
 
 def test_browser_login_uses_bearer_and_logout_revokes_session(browser_page):
@@ -323,6 +359,20 @@ def test_stream_recovers_after_temporary_server_failure_without_user_restart(bro
     page.locator("#scanToggle").click()
 
 
+def test_each_unrecognized_face_shows_its_own_guidance(browser_page):
+    page, expect = browser_page
+    def scene(_frame_id):
+        return [{"track_id": "dark", "face_box": [45, 135, 110, 160], "decision": "unknown",
+                 "message": "Khung hình quá tối, vui lòng tăng ánh sáng"},
+                {"track_id": "small", "face_box": [300, 135, 110, 160], "decision": "unknown",
+                 "message": "Khuôn mặt quá nhỏ, vui lòng tiến gần camera"}]
+    serve_ui(page, scene=scene)
+    start_scan(page)
+    expect(page.locator('[data-track-id="dark"] .scan-face-code')).to_have_text("Tăng ánh sáng")
+    expect(page.locator('[data-track-id="small"] .scan-face-code')).to_have_text("Tiến gần camera")
+    page.locator("#scanToggle").click()
+
+
 def test_mobile_crowd_labels_have_separate_slots(browser_page):
     page, expect = browser_page
     page.set_viewport_size({"width": 390, "height": 844})
@@ -368,7 +418,7 @@ def test_changed_live_face_cannot_keep_the_previous_person_green_while_model_is_
     page.locator("#scanToggle").click()
 
 
-def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True):
+def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True, consent="granted"):
     root = Path(__file__).resolve().parents[1] / "frontend"
     state = {"accept": accept, "scans": [], "captured": [], "pending": [], "resets": 0}
     if audio:
@@ -409,14 +459,16 @@ def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True)
         if path == "/classes":
             body = []
         elif path == "/admin/students/faces":
-            body = [{"id": 1, "student_code": "TEST001", "full_name": "Synthetic Test", "consent_status": "granted",
+            body = [{"id": 1, "student_code": "TEST001", "full_name": "Synthetic Test", "consent_status": consent,
                      "face_template_count": len(state["captured"]), "captured_pose_count": len(state["captured"]),
                      "enrollment_complete": len(state["captured"]) == 5}]
         elif path == "/face-enrollment/engine":
             body = {"available": True, "engine": "test-engine"}
-        elif path.endswith("/face-enrollment/reset"):
+        elif path.endswith("/face-enrollment/start"):
             state["resets"] += 1
             state["captured"].clear()
+            body = {"enrollment_id": "a" * 32}
+        elif path.endswith("/face-enrollment/draft"):
             route.fulfill(status=204)
             return
         elif path.endswith("/face-enrollment/scan"):
@@ -449,6 +501,14 @@ def start_enrollment(page, expect):
     page.locator("#captureFace").click()
     page.wait_for_function("document.querySelector('#faceVideo').readyState >= 2 && "
                            "document.querySelector('#faceVideo').videoWidth > 0", timeout=15000)
+
+
+def test_unconsented_student_link_explains_next_step(browser_page):
+    page, expect = browser_page
+    serve_enrollment(page, consent="pending")
+    expect(page.locator("#notice")).to_contain_text("TEST001 chưa đồng ý")
+    expect(page.locator("#notice")).to_contain_text("Quản lý sinh viên")
+    expect(page.locator("#faceStudent")).to_have_value("")
 
 
 def test_enrollment_repeats_short_beeps_and_stops_them_when_paused(browser_page):

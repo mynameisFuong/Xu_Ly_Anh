@@ -50,16 +50,18 @@
   };
   const badge = (status) =>
     `<span class="badge ${esc(status)}">${statusLabels[status] || esc(status)}</span>`;
+  // SQLite returns previously stored UTC datetimes without a timezone suffix.
+  const serverDate = (value) => new Date(typeof value === "string" && !/(?:Z|[+-]\d\d:\d\d)$/i.test(value) ? `${value}Z` : value);
   const datetime = (value) =>
     value
-      ? new Date(value).toLocaleString("vi-VN", {
+      ? serverDate(value).toLocaleString("vi-VN", {
           dateStyle: "short",
           timeStyle: "short",
         })
       : "—";
   const localInput = (value) => {
     if (!value) return "";
-    const date = new Date(value);
+    const date = serverDate(value);
     const pad = (n) => String(n).padStart(2, "0");
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
   };
@@ -254,7 +256,7 @@
       ? filtered
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.captured_pose_count}/5 góc</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> <a class="btn secondary small" href="/demo/faces?student=${item.id}">Quét Face ID</a> <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.captured_pose_count}/5 góc</td><td><button class="btn secondary small" data-edit="${item.id}">Sửa</button> ${item.consent_status === "granted" ? `<a class="btn secondary small" href="/demo/faces?student=${item.id}">Quét Face ID</a>` : '<span class="muted">Cần đồng ý để quét</span>'} <button class="btn danger small" data-delete="${item.id}">Xóa</button></td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -467,6 +469,7 @@
     { id: "down", title: "Cúi xuống", hint: "Hơi cúi cằm và giữ yên." },
   ];
   let enrollStudentId = null;
+  let enrollmentId = null;
   let enrollIndex = 0;
   let enrollTimer = null;
   let enrollBusy = false;
@@ -579,6 +582,11 @@
     enrollEpoch += 1;
     enrollReadyAt = 0;
     enrollmentAudio.stop({ keepTone: keepCompletionTone });
+    if (enrollStudentId && enrollmentId) {
+      api(`/students/${enrollStudentId}/face-enrollment/draft?enrollment_id=${encodeURIComponent(enrollmentId)}`,
+        { method: "DELETE", keepalive: true }).catch(() => {});
+    }
+    enrollmentId = null;
     enrollStudentId = null;
     neutralPitch = null;
     $("captureFace").textContent = "Bắt đầu quét 5 góc";
@@ -605,6 +613,7 @@
           image_base64: canvas.toDataURL("image/jpeg", 0.88),
           target_pose: poses[poseIndex].id,
           neutral_pitch: neutralPitch,
+          enrollment_id: enrollmentId,
         },
       );
       if (epoch !== enrollEpoch || studentId !== enrollStudentId || poseIndex !== enrollIndex) return;
@@ -704,7 +713,13 @@
     const requestedStudent = new URLSearchParams(location.search).get(
       "student",
     );
-    if (requestedStudent) $("faceStudent").value = requestedStudent;
+    if (requestedStudent) {
+      const student = faceStudents.find(item => item.id === Number(requestedStudent));
+      if (student && student.consent_status !== "granted") {
+        notify(`${student.student_code} chưa đồng ý sử dụng Face ID. Vui lòng cập nhật trạng thái tại Quản lý sinh viên.`, "warn");
+      } else if (!student) notify("Không tìm thấy sinh viên được yêu cầu. Vui lòng kiểm tra danh sách.", "warn");
+      else $("faceStudent").value = requestedStudent;
+    }
     $("faceSearch").addEventListener("input", renderFaces);
     $("faceCamera").addEventListener(
       "click",
@@ -718,7 +733,7 @@
       run(async () => {
         if (enrollTimer) {
           stopEnrollment();
-          renderEnrollment("Đã tạm dừng. Bắt đầu lại sẽ xóa các góc vừa quét.");
+          renderEnrollment("Đã tạm dừng. Mẫu cũ vẫn dùng được; bắt đầu lại sẽ quét lại từ đầu.");
           return;
         }
         if (enrollStarting) return;
@@ -743,12 +758,13 @@
           if (!faceStream) faceStream = await openCamera("faceVideo");
           if (
             student?.face_template_count &&
-            !confirm("Quét lại sẽ vô hiệu hóa các mẫu khuôn mặt cũ. Tiếp tục?")
+            !confirm("Mẫu cũ vẫn dùng được cho đến khi quét đủ 5 góc mới. Tiếp tục?")
           )
             return;
           if (startingEpoch !== enrollEpoch) return;
-          await api(`/students/${id}/face-enrollment/reset`, { method: "POST" });
+          const started = await json("POST", `/students/${id}/face-enrollment/start`, {});
           if (startingEpoch !== enrollEpoch) return;
+          enrollmentId = started.enrollment_id;
           enrollEpoch += 1;
           enrollStudentId = id;
           enrollIndex = 0;
@@ -925,6 +941,17 @@
     $("scanFaces").replaceChildren();
     $("scanGuide").hidden = !scanActive;
   }
+  function shortFaceHint(message) {
+    const hints = [
+      ["quá tối", "Tăng ánh sáng"], ["quá sáng", "Giảm ánh sáng"],
+      ["quá nhỏ", "Tiến gần camera"], ["bị mờ", "Giữ mặt yên"],
+      ["bị cắt", "Đưa mặt vào khung"], ["thiếu chi tiết", "Đổi vị trí và ánh sáng"],
+      ["chưa có mẫu", "Chưa có Face ID"], ["điều chỉnh", "Liên hệ giảng viên"],
+    ];
+    const text = String(message || "");
+    return hints.find(([pattern]) => text.toLocaleLowerCase("vi-VN").includes(pattern))?.[1]
+      || text || "Giữ mặt rõ trong camera";
+  }
   function renderScanFaces(result) {
     const video = $("scanVideo");
     const layer = $("scanFaces");
@@ -973,7 +1000,9 @@
       box.querySelector(".scan-face-name").textContent = recognized ? face.full_name
         : face.decision === "pending" && face.confirmation_hits > 0
           ? `Đang xác nhận ${face.confirmation_hits}/${face.confirmation_required}` : "Đang nhận diện";
-      box.querySelector(".scan-face-code").textContent = recognized ? face.student_code || "Đã điểm danh" : "Giữ mặt rõ trong camera";
+      box.querySelector(".scan-face-code").textContent = recognized ? face.student_code || "Đã điểm danh"
+        : face.live_valid === false ? "Giữ mặt rõ trong camera"
+        : shortFaceHint(face.message);
       box.title = face.message || "";
       label.title = recognized ? face.full_name : face.message || "";
       labels.push({ box, label, left, top, width: width * scale, center: left + width * scale / 2 });
@@ -1008,6 +1037,7 @@
       $("scanBadge").textContent = "Đã dừng";
       $("scanBadge").className = "badge pending";
     }
+    renderScanFeedback(scanStream ? "Đã dừng quét. Camera vẫn bật; bấm Tắt camera nếu không dùng." : "Đã dừng quét và camera đang tắt.");
   }
   function renderBoard(board) {
     latestBoard = board;
@@ -1042,6 +1072,28 @@
     lastBoardRefresh = performance.now();
     refreshBoard().catch(() => {}).finally(() => { boardRefreshBusy = false; });
   }
+  async function refreshReadiness(sessionId) {
+    const hint = $("faceReadiness");
+    hint.hidden = false;
+    hint.textContent = "Đang kiểm tra Face ID của lớp…";
+    try {
+      const result = await api(`/sessions/${sessionId}/face-readiness`);
+      if (activeSession?.session_id !== sessionId) return;
+      if (!result.engine_ready) {
+        hint.textContent = "Engine Face ID chưa sẵn sàng. Vẫn có thể điểm danh thủ công.";
+      } else if (result.ready < result.total) {
+        hint.replaceChildren(document.createTextNode(`${result.ready}/${result.total} sinh viên có Face ID hợp lệ. `));
+        const link = document.createElement("a");
+        link.href = "/demo/faces";
+        link.textContent = "Kiểm tra đăng ký khuôn mặt";
+        hint.append(link, document.createTextNode("; vẫn có thể điểm danh thủ công."));
+      } else {
+        hint.textContent = result.total ? `Đã sẵn sàng: ${result.ready}/${result.total} sinh viên có Face ID hợp lệ.` : "Lớp chưa có sinh viên được ghi danh.";
+      }
+    } catch (_) {
+      if (activeSession?.session_id === sessionId) hint.textContent = "Chưa kiểm tra được Face ID của lớp. Có thể thử lại hoặc điểm danh thủ công.";
+    }
+  }
   async function chooseSession(id) {
     stopScan();
     loggedAttendances.clear();
@@ -1060,6 +1112,7 @@
     $("policyGrace").value = activeSession.late_grace_minutes;
     $("sessionSubtitle").textContent =
       `${activeSession.class_code} · ${activeSession.class_name}`;
+    refreshReadiness(activeSession.session_id);
     await refreshBoard();
     history.replaceState(null, "", `/demo/attendance?session=${id}`);
   }
@@ -1182,6 +1235,7 @@
         else {
           activeSession = null;
           stopScan();
+          $("faceReadiness").hidden = true;
           $("attendanceTable").innerHTML = emptyRow(
             6,
             "Chọn buổi đang mở để xem danh sách.",
@@ -1227,8 +1281,18 @@
     $("scanCamera").addEventListener(
       "click",
       run(async () => {
-        if (!scanStream) scanStream = await openCamera("scanVideo");
-        notify("Camera đã bật.");
+        if (scanStream) {
+          stopScan();
+          scanStream.getTracks().forEach(track => track.stop());
+          scanStream = null;
+          $("scanVideo").srcObject = null;
+          $("scanCamera").textContent = "Bật camera";
+          renderScanFeedback("Đã dừng quét và tắt camera.");
+        } else {
+          scanStream = await openCamera("scanVideo");
+          $("scanCamera").textContent = "Tắt camera";
+          notify("Camera đã bật.");
+        }
       }),
     );
     $("scanToggle").addEventListener(
@@ -1246,6 +1310,7 @@
         const epoch = scanEpoch, sessionId = activeSession.session_id;
         try {
           if (!scanStream) scanStream = await openCamera("scanVideo");
+          $("scanCamera").textContent = "Tắt camera";
           if (epoch !== scanEpoch || activeSession?.session_id !== sessionId) return;
           stopScan();
           scanActive = true;

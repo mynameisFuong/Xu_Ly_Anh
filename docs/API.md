@@ -61,6 +61,16 @@ Shadow lấy mẫu không thay embedding hay quyết định của pipeline đan
 Pipeline còn trả `stream_recognition=true`, `stream_max_faces_per_frame` và
 `stream_confirmation_hits` để client chọn luồng nhiều mặt.
 
+Giờ vào học, thời gian điểm danh và sự kiện được chuẩn hóa theo UTC; API trả
+timestamp có múi giờ `Z`, giao diện hiển thị giờ địa phương của trình duyệt.
+Timestamp cũ trong SQLite không có múi giờ được hiểu là UTC như nghiệp vụ hiện
+có. Các buổi đã bị chỉnh sai trước khi sửa lỗi cần được người vận hành kiểm tra;
+không tự thay đổi dữ liệu lịch sử.
+
+`GET /sessions/{id}/face-readiness` trả số sinh viên được ghi danh có đủ mẫu
+Face ID hợp lệ theo model hiện tại, tổng số sinh viên và trạng thái engine.
+Cảnh báo trên giao diện không ngăn điểm danh thủ công.
+
 ## Stream nhiều khuôn mặt
 
 Web/desktop dùng `POST /sessions/{id}/scan-stream` với bearer token.
@@ -163,6 +173,20 @@ POST /sessions/{id}/recognition-events vẫn dành cho worker tin cậy có toke
 Không còn điều kiện PAD, nhưng quyền, consent và các quy tắc nghiệp vụ giữ nguyên.
 
 ## Đăng ký và thao tác thủ công
+
+/students/{id}/face-enrollment/start tạo lượt quét tạm và trả `enrollment_id`.
+Gửi mã này cùng mỗi request `/students/{id}/face-enrollment/scan`: năm góc mới
+được lưu tạm, mẫu cũ vẫn hoạt động cho đến khi cả năm góc mới được lưu và chuyển
+đổi trong cùng giao dịch DB. `DELETE /students/{id}/face-enrollment/draft` với
+query `enrollment_id` hủy lượt tạm, không thay mẫu đang hoạt động. Lượt mới cho
+cùng sinh viên thay lượt tạm cũ; đổi profile giữa lượt yêu cầu bắt đầu lại.
+Mỗi lượt tạm thuộc người đã bắt đầu; dữ liệu tạm được xóa khi hoàn tất, hủy,
+khởi tạo lượt mới, xóa sinh viên hoặc thu hồi/chuyển trạng thái đồng ý.
+Nếu kết nối bị ngắt trước khi gửi hủy, lượt tạm còn trong DB đến một trong các
+thao tác trên. Khởi động backend áp dụng bảng dữ liệu mới qua `create_all`.
+
+Endpoint `/students/{id}/face-enrollment/reset` cũ vẫn vô hiệu hóa mẫu hiện có
+để tương thích client cũ; giao diện mới dùng `/start` thay thế.
 
 /students/{id}/face-enrollment/scan vẫn hướng dẫn đủ năm góc để tạo mẫu nhận diện,
 không phải thử thách trong luồng điểm danh. Upload/import dùng cùng preprocessing

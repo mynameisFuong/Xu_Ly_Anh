@@ -166,6 +166,23 @@ class FaceTemplate(Base):
     student: Mapped[Student] = relationship(back_populates="face_templates")
 
 
+class FaceEnrollmentDraft(Base):
+    __tablename__ = "face_enrollment_drafts"
+    __table_args__ = (UniqueConstraint("student_id", "pose_label", name="uq_enrollment_draft_pose"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
+    enrollment_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    pose_label: Mapped[str] = mapped_column(String(20))
+    model_name: Mapped[str] = mapped_column(String(80))
+    model_version: Mapped[str] = mapped_column(String(80))
+    embedding: Mapped[bytes] = mapped_column(LargeBinary)
+    embedding_dim: Mapped[int] = mapped_column(Integer)
+    image_bytes: Mapped[bytes] = mapped_column(LargeBinary)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
 class RecognitionEvent(Base):
     __tablename__ = "recognition_events"
     __table_args__ = (UniqueConstraint("idempotency_key", name="uq_recognition_idempotency"),)

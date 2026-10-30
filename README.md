@@ -1,246 +1,125 @@
-# AttendAI — Hệ thống điểm danh bằng khuôn mặt
+# AttendAI — điểm danh bằng khuôn mặt
 
-Hệ thống điểm danh lớp học local-first với giao diện quản trị chuyên nghiệp, nhận diện khuôn mặt qua webcam, quản lý sinh viên/Face ID, chốt đúng giờ–đi trễ–vắng và xuất báo cáo Excel/CSV.
+Bản demo học thuật chạy local: quản lý sinh viên/lớp/buổi học, đăng ký khuôn mặt
+năm góc, nhận diện nhiều người liên tục qua camera, điều chỉnh điểm danh và xuất
+báo cáo. Backend FastAPI + SQLite; nhận diện dùng `face_recognition`/dlib 128D.
 
-## Điểm nổi bật của bản demo
+**Phạm vi:** hệ thống không có liveness/PAD và chưa chứng minh chống ảnh in hay
+video phát lại. Kết quả tự động cần người giám sát; độ chính xác và hiệu năng phải
+đo với camera và người tham gia thực tế. Không đưa ảnh hay vector khuôn mặt vào Git.
 
-- Dashboard vận hành: số sinh viên, độ phủ Face ID, lớp học, phiên đang mở và tỷ lệ tham dự.
-- Kiosk điểm danh trực tiếp: camera, hướng dẫn chất lượng, nhận diện liên tục và bảng kết quả realtime.
-- Tiếp tục phiên đang mở sau khi tải lại trang, chống ghi trùng bằng idempotency và unique constraint.
-- Quản lý hồ sơ, nhập danh sách sinh viên từ CSV/Excel và đăng ký Face ID 5 góc qua camera.
-- Đăng ký Face ID đa góc theo năm tư thế: chính diện, trái, phải, lên và xuống.
-- Engine mã nguồn mở `ageitgey/face_recognition` + dlib ResNet, lưu năm vector 128 chiều cho mỗi sinh viên.
-- Nhận diện realtime bằng khoảng cách Euclidean, lấy mẫu gần nhất theo từng người và kiểm tra margin người thứ hai.
-- Chấm đúng giờ/đi trễ theo chính sách từng phiên; tự đánh dấu vắng khi kết thúc.
-- Lịch sử phiên, ảnh minh chứng, audit cho cập nhật thủ công và báo cáo Excel/CSV.
+## Cài đặt và chạy demo trên Windows
 
-> Đây là bản demo học thuật chạy local. Xem `docs/DECISIONS.md` để biết các hạng mục cần nâng cấp trước production.
-
-MVP cho he thong nhan dien khuon mat va diem danh tu dong. Thiet ke uu tien chay local tren Windows, CPU, de debug cho junior.
-
-## Kien Truc
-
-```mermaid
-flowchart LR
-    Webcam --> CameraWorker[Camera Worker]
-    CameraWorker --> AIPipeline[AI Pipeline]
-    AIPipeline --> API[FastAPI Backend]
-    UI[Teacher/Admin UI hoac Swagger] --> API
-    API --> DB[(SQLite)]
-    API --> Storage[(Local Storage)]
-    API --> Logs[Logs]
-```
-
-Trong MVP, chi backend duoc ghi ban ghi diem danh chinh thuc. Camera worker va AI pipeline chi gui su kien nhan dien ung vien.
-
-## Cai Dat Tren Windows
+Từ thư mục dự án vừa clone/pull, với Python 3.13 chính thức và PowerShell:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-pip install -r requirements-camera.txt
-copy .env.example .env
-python scripts/init_db.py
-python scripts/seed_demo.py
-uvicorn backend.app.main:app --reload
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+.\.venv\Scripts\python.exe scripts/init_db.py
+.\.venv\Scripts\python.exe scripts/seed_demo.py
+.\.venv\Scripts\python.exe scripts/run_web.py --reload
 ```
 
-### Cài engine Face ID trên Windows
+Mở `http://127.0.0.1:8000/demo`. Tài khoản mới do seed tạo: `admin/admin123`,
+`teacher/teacher123`, `device01/device123`. Nếu tài khoản đã tồn tại, seed giữ
+nguyên mật khẩu hiện có. Các mật khẩu này chỉ dành cho demo local.
 
-Chạy một lần trong virtualenv. Script dùng wheel `dlib-bin` để tránh phải biên dịch dlib:
+Seed tạo dữ liệu giả lập có tiền tố `[DEMO]`/`DEMO`: ba lớp, 12 sinh viên, ba
+buổi đã đóng với trạng thái đúng/trễ/vắng giả lập và tối đa hai buổi đang mở.
+Mỗi buổi mở có hai bản ghi mẫu đúng giờ/trễ và các sinh viên còn lại chờ điểm danh.
+Giờ vào học buổi mở là 30 phút trước lúc seed; buổi lịch sử có ngày cố định.
+Các bản ghi mẫu được gắn nguồn thủ công, không phải kết quả nhận diện thật. Chạy lại không ghi đè
+hồ sơ, mật khẩu hay điểm danh đã có; mã trùng với dữ liệu không thuộc seed được
+bỏ qua. Trước buổi demo, cập nhật giờ vào học cho phù hợp; nếu đã đóng buổi mẫu,
+mở buổi mới trên giao diện khi muốn tiếp tục demo.
+
+Seed **không tạo hay tải ảnh, embedding hoặc Face ID**. Để demo nhận diện, cài
+engine bên dưới và đăng ký người tham gia đồng ý sử dụng ảnh qua camera trên máy
+đó. Không có mẫu, hệ thống vẫn cho xem danh sách và điểm danh thủ công.
+
+### Cài Face ID trên Windows
+
+Sau khi tạo `.venv`, chạy trong PowerShell:
 
 ```powershell
+.\.venv\Scripts\Activate.ps1
 powershell -ExecutionPolicy Bypass -File scripts\install_faceid.ps1
 ```
 
-Sau khi cài, vào **Khuôn mặt → Quét Face ID 5 góc**. Quy trình chỉ hoàn tất khi đã thu đủ năm góc nhìn đạt chất lượng.
+Script cài `dlib-bin`, model và `face_recognition`, rồi kiểm tra engine. Trên macOS
+Apple Silicon, xem và chạy `bash scripts/install_faceid.sh` trong virtualenv.
+Khi thiếu dlib, ứng dụng vẫn có thể dùng tính năng quản lý/điểm danh thủ công,
+nhưng API điểm danh bằng Face ID và đăng ký năm góc không dùng histogram dự phòng.
 
-### Cài engine Face ID trên macOS Apple Silicon
+## Luồng demo
 
-Tạo `.venv` và cài hai bộ dependency như phần cài đặt ở trên, sau đó chạy:
+1. **Sinh viên:** xem dữ liệu `[DEMO]`, tìm kiếm, chỉnh sửa hoặc nhập CSV/XLSX có
+   xem trước; chọn lớp ghi danh và trạng thái đồng ý.
+2. **Khuôn mặt:** chọn sinh viên đã đồng ý, quét lần lượt chính diện, trái, phải,
+   lên, xuống. Tít ngắn là đang chờ; tít dài là góc đã nhận. Bộ mẫu cũ tiếp tục
+   hoạt động nếu quét lại chưa hoàn tất.
+3. **Buổi học:** chọn một buổi đang mở hoặc tạo buổi mới. Trong **Điểm danh**,
+   xem cảnh báo số sinh viên đã có Face ID, bật camera và bắt đầu quét một lần.
+   Vàng là đang chờ; xanh kèm tên là đã lưu. Người khác có thể tiếp tục vào khung.
+4. Xem bảng; điều chỉnh thủ công với lý do; đóng buổi để đánh dấu vắng những người
+   chưa có bản ghi. Giao diện web xuất CSV; API cũng có endpoint xuất XLSX.
 
-```bash
-bash scripts/install_faceid.sh
-```
+Thời gian được lưu/trao đổi theo UTC và hiển thị theo múi giờ trình duyệt. Với
+buổi đã từng bị chỉnh bởi phiên bản cũ, kiểm tra lại giờ vào học trước khi demo.
 
-Script cài wheel `dlib-bin` phù hợp với Python 3.13/macOS ARM và model khuôn mặt vào `.venv`. Sau khi cài, khởi động lại backend rồi kiểm tra trang **Khuôn mặt**. `pip check` có thể báo gói `face-recognition` thiếu tên dependency `dlib`: đây là do wheel `dlib-bin` cung cấp module `dlib` dưới tên gói khác; script xác nhận engine bằng cách import và kiểm tra `supports_pose`.
+## Chuyển dữ liệu nghiệp vụ giữa các máy
 
-Mo Swagger UI tai:
+Git **không tự đồng bộ cơ sở dữ liệu local**. Máy mới pull code rồi chạy seed sẽ
+có dữ liệu giả lập; dữ liệu do người dùng tự tạo ở máy cũ cần chuyển riêng.
 
-```text
-http://127.0.0.1:8000/docs
-```
-
-Mo giao dien quan tri tren trinh duyet tai:
-
-```text
-http://127.0.0.1:8000/demo
-```
-
-Chay camera worker:
-
-```powershell
-pip install -r requirements-camera.txt
-python camera_worker/main.py --camera 0 --api http://127.0.0.1:8000 --session-id 1 --class-id 1
-```
-
-Neu ban dang dung Python cua MSYS va pip phai build `pydantic-core` hoac OpenCV tu source, hay cai Python chinh thuc tu python.org roi tao lai `.venv`. Backend va test nghiep vu khong phu thuoc OpenCV; OpenCV chi can khi chay camera/AI.
-
-## Test Demo Camera
-
-### Nhận diện và tiền xử lý ảnh
-
-Liveness/PAD và thử thách quay đầu đã được gỡ theo yêu cầu. Web/desktop gửi ảnh
-trực tiếp để nhận diện; đăng ký mẫu vẫn giữ đủ năm góc. Không cần model PAD hoặc
-ONNX Runtime để điểm danh. Hệ thống hiện không kiểm chứng chống ảnh in/video.
-
-Trên máy đã có môi trường Python 3.13, chạy:
+Trên máy nguồn, xuất metadata vào đường dẫn chưa tồn tại:
 
 ```powershell
-.\.venv313\Scripts\python.exe scripts/run_web.py --reload
+.\.venv\Scripts\python.exe scripts/transfer_metadata.py export storage/portable/metadata.json
 ```
 
-Dừng backend cũ trước khi chạy lại và tải lại trang web. Launcher local đọc lại
-.env hiện tại; các khóa LIVENESS_* và WEB_LIVENESS_* cũ được bỏ qua.
-
-PREPROCESSING_MODE=enforce bật tìm hướng/roll, căn mắt và CLAHE. Chỉ khi đổi
-profile preprocessing mới cần đăng ký lại đủ năm góc cùng phiên bản; việc gỡ
-liveness lần này không thay profile hoặc embedding hiện có. Xem
-[hướng dẫn pipeline](docs/FACE_ANALYSIS.md), [API](docs/API.md) và
-[kế hoạch nâng cấp học thuật](docs/PREPROCESSING_UPGRADE_PLAN.md).
+Chuyển file JSON đó sang máy đích bằng phương thức bạn chọn. Sau khi máy đích đã
+chạy `init_db.py` và `seed_demo.py`, nhập bằng đường dẫn đến file đã chuyển:
 
 ```powershell
-pip install -r requirements-camera.txt
-uvicorn backend.app.main:app --reload
+.\.venv\Scripts\python.exe scripts/transfer_metadata.py import storage/portable/metadata.json
 ```
 
-Sau do mo:
+File gồm hồ sơ, lớp, ghi danh, buổi và bản ghi điểm danh; **không gồm ảnh,
+embedding, ảnh minh chứng, mật khẩu, token, event nhận diện hay log audit gốc**.
+Thông tin cá nhân trong metadata vẫn cần được bảo vệ. Nhập là bổ sung: mã sinh
+viên/lớp đã có được giữ nguyên; bản ghi điểm danh đã có không bị ghi đè; nếu lớp
+đích đã có buổi mở thì buổi mở xung đột bị bỏ qua và số lượng được báo. Khi không
+có tài khoản giảng viên trùng, lớp mới được gán cho tài khoản `teacher` sẵn có
+(hoặc chỉ định `--teacher TAI_KHOAN`). Không tự tạo mật khẩu của máy nguồn.
+Không có mẫu nhận diện trên máy đích; phải đăng ký lại để quét khuôn mặt.
 
-```text
-http://127.0.0.1:8000/demo
-```
+## Cấu hình và kiểm thử
 
-Luot test nhanh:
-
-1. Dang nhap tai `/demo/login` bang `admin / admin123`.
-2. Mo trang **Sinh vien** de them, sua va ghi nhan trang thai dong y.
-3. Mo trang **Khuon mat** de quet du 5 goc cho sinh vien da dong y.
-4. Mo trang **Buoi hoc**, chon lop, gio vao hoc va so phut cho phep tre, sau do mo buoi.
-5. Trang **Diem danh** cho phep bat camera, quet, xem bang diem danh, dieu chinh thu cong va xuat CSV.
-
-Giao dien gom cac URL rieng: `/demo` (tong quan), `/demo/students`, `/demo/faces`, `/demo/sessions`, `/demo/attendance`.
-
-## Chay App Desktop
-
-Mo terminal 1 de chay backend:
+`.env.example` mặc định `PREPROCESSING_MODE=off`, detector HOG; cấu hình `enforce`
+v1/v2 và YuNet là tùy chọn. Đổi profile ảnh hưởng embedding có thể cần đăng ký lại
+năm góc. `run_web.py` đọc `.env` ở thư mục dự án; khởi động lại sau khi chỉnh.
 
 ```powershell
-.\.venv-win\Scripts\activate
-python scripts\init_db.py
-python scripts\seed_demo.py
-uvicorn backend.app.main:app --reload
+.\.venv\Scripts\python.exe -m pytest -q
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pip install -r requirements-browser.txt
+.\.venv\Scripts\python.exe -m pytest -q tests/test_web_ui.py --run-browser
 ```
 
-Mo terminal 2 de chay app:
+Test browser dùng Chrome và webcam tổng hợp; không thay thế thử nghiệm người thật.
+OpenAPI tại `http://127.0.0.1:8000/docs`. Có thể chạy desktop bằng
+`python desktop_app/main.py` khi backend đã chạy; camera worker dùng token riêng.
 
-```powershell
-.\.venv-win\Scripts\activate
-python desktop_app\main.py
-```
+## Tài liệu hệ thống
 
-Tai khoan demo:
-
-```text
-admin / admin123
-device01 / device123
-```
-
-Luong admin:
-
-1. Dang nhap bang `admin`.
-2. Tao yeu cau diem danh gom ten lop, danh sach sinh vien, giang vien, gio vao hoc va gio ket thuc.
-3. Import anh khuon mat. Ten file nen bat dau bang MSSV, vi du `SV001.jpg`, `SV001_1.jpg`.
-
-Luong user/device:
-
-1. Dang nhap bang `device01`.
-2. Bam `Tai yeu cau` de lay cac yeu cau diem danh dang mo.
-3. Chon yeu cau va bam `Bat dau diem danh`.
-4. Dua mat vao camera. Khi nhan dien duoc, app hien ho ten, ma sinh vien, lop hoc va thong bao diem danh.
-
-Hien tai desktop app da ho tro diem danh sinh vien. Diem danh giang vien nen lam o buoc tiep theo bang cach tach doi tuong nhan dien thanh `Person`/`PersonFaceTemplates` dung chung cho sinh vien va giang vien, thay vi gan tat ca vao bang `Students`.
-
-Web/desktop dùng token trả về từ `POST /auth/login-json` với JSON username/password.
-Các request sau dùng header:
-
-```text
-Authorization: Bearer <access_token>
-X-Camera-Token: change-me-camera-token
-```
-
-`X-Camera-Token` chỉ dành cho worker tin cậy, không dùng trong frontend.
-Đăng xuất thu hồi token; phiên mặc định hết hạn sau tám giờ. Nếu trình duyệt
-còn tài khoản demo cũ, tải lại trang và đăng nhập lại một lần.
-Xem [nâng cấp độ tin cậy và đánh giá nhiều người](docs/ATTENDANCE_RELIABILITY.md).
-
-## Nhập danh sách sinh viên
-
-Trang **Sinh viên → Nhập CSV / Excel** cho phép tải file mẫu, xem trước và thêm
-danh sách từ `.csv` hoặc `.xlsx`. Cần MSSV và họ tên; có thể chọn lớp để ghi danh
-các sinh viên mới. MSSV trùng và dòng lỗi được bỏ qua, hồ sơ cũ được giữ nguyên.
-Giới hạn 5 MB / 2.000 sinh viên. Thiếu trạng thái đồng ý sẽ là Chờ đồng ý.
-
-## Thu Nghiem
-
-```powershell
-pytest
-```
-
-Tiền xử lý ảnh đã có profile `pre-v2`: chuẩn hóa hướng, kiểm tra chất lượng pixel
-gốc, gamma/CLAHE theo vùng mặt và lọc nhiễu có điều kiện. Giữ nguyên trọng số dlib
-và ngưỡng nhận diện. Profile `pre-v1` và mẫu cũ vẫn hoạt động; mặc định đo đối chiếu
-v2 trên 10% lượt khi v1 đang enforce. Xem [hướng dẫn benchmark và chuyển profile](docs/PREPROCESSING_BENCHMARK.md)
-và [kế hoạch/trạng thái triển khai](docs/PREPROCESSING_UPGRADE_PLAN.md).
-Cài requirements-dev.txt để chạy kiểm thử HTTP và pipeline.
-
-Nếu quay đầu hay báo không thấy mặt, có thể bật detector hỗ trợ YuNet (CPU,
-không thay model nhận dạng dlib):
-
-```powershell
-python scripts/download_face_detector.py
-```
-
-Đặt `FACE_DETECTION_BACKEND=hybrid` và `PREPROCESSING_MODE=enforce` trong `.env`,
-rồi khởi động lại bằng `python scripts/run_web.py --reload`. Status
-`/face-analysis/status` phải có `face_detection.yunet_ready=true`. Thiếu model
-thì quay về HOG và status báo lỗi; không tự tải model lúc nhận request. YuNet
-chỉ hỗ trợ tìm mặt, không thay ngưỡng nhận dạng hoặc chống giả mạo. Nhánh HOG
-đã nhận mặt vẫn giữ box/profile cũ nên chỉ bật detector không buộc đăng ký lại.
-Nếu đổi cấu hình căn mắt/CLAHE/mirror thì vẫn cần đăng ký lại theo profile mới.
-
-Khi điểm danh, nhiều người có thể cùng đứng trước camera. Quét tiếp tục tự động
-sau khi một người được ghi nhận; khung xanh kèm tên/MSSV là đã lưu điểm danh,
-khung vàng tiếp tục chờ. Chỉ bước đăng ký mẫu mới yêu cầu đúng một khuôn mặt.
-Xem [hướng dẫn stream nhiều mặt](docs/STREAM_RECOGNITION.md).
-Ảnh mờ/tối hoặc profile không phù hợp
-vẫn bị từ chối; điểm danh thủ công tiếp tục hoạt động.
-
-Kiểm tra lint: `python -m ruff check .` (hoặc `make lint`). Để kiểm tra giao diện
-camera bằng Chrome và webcam tổng hợp, không dùng camera thật:
-
-```powershell
-python -m pip install -r requirements-browser.txt
-python -m pytest -q tests/test_web_ui.py --run-browser
-```
-
-`make test` chạy unit/integration và bỏ qua Chrome khi không có --run-browser;
-`make test-browser` chạy riêng nhóm giao diện. Kiểm thử tổng hợp không chứng minh
-accuracy nhận diện thực tế; cần benchmark theo người/phiên/camera như kế hoạch.
-
-## Luu Y Bao Mat
-
-- Khong log anh khuon mat, embedding hoac token.
-- Embedding van la du lieu sinh trac hoc nhay cam, khong xem la vo danh.
-- Can co dong y cua sinh vien truoc khi dang ky khuon mat.
-- Luon co phuong an diem danh thu cong.
+- [Mô tả hệ thống hiện hành](docs/SYSTEM.md): phạm vi, kiến trúc, thuật toán,
+  nghiệp vụ, dữ liệu, giới hạn và gợi ý dẫn chứng cho báo cáo.
+- [API](docs/API.md), [luồng stream nhiều mặt](docs/STREAM_RECOGNITION.md),
+  [tiền xử lý và nhận diện](docs/FACE_ANALYSIS.md).
+- [Phương pháp thử nghiệm đồ án](docs/THU_NGHIEM_DO_AN.md),
+  [benchmark tiền xử lý](docs/PREPROCESSING_BENCHMARK.md),
+  [đánh giá stream](docs/ATTENDANCE_RELIABILITY.md).
+- [Giả định](docs/ASSUMPTIONS.md); [lịch sử quyết định](docs/DECISIONS.md).
+  Một số tài liệu lịch sử còn nhắc PAD đã gỡ và không mô tả runtime hiện tại.

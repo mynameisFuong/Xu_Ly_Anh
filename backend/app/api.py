@@ -21,6 +21,7 @@ from backend.app.models import (
     ClassEnrollment,
     ClassSession,
     ConsentStatus,
+    FaceEnrollmentDraft,
     FaceTemplate,
     SessionStatus,
     Student,
@@ -472,6 +473,8 @@ def update_student(
     updates = payload.model_dump(exclude_unset=True)
     for field, value in updates.items():
         setattr(student, field, value)
+    if updates.get("consent_status") in {ConsentStatus.REVOKED.value, ConsentStatus.PENDING.value}:
+        db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id).delete()
 
     try:
         db.commit()
@@ -494,6 +497,7 @@ def delete_student(
 
     student.deleted_at = utc_now()
     db.query(FaceTemplate).filter(FaceTemplate.student_id == student_id).update({"is_active": False})
+    db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id).delete()
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -777,6 +781,25 @@ def attendance_board(
     if class_session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return _build_attendance_board(db, class_session)
+
+
+@router.get("/sessions/{session_id}/face-readiness")
+def session_face_readiness(session_id: int, user: User = Depends(require_user_or_admin),
+                           db: Session = Depends(get_db)) -> dict:
+    from backend.app.security import check_class_access
+    from backend.app.services.stream_recognition import _gallery
+
+    session = db.get(ClassSession, session_id)
+    if session is None:
+        raise HTTPException(404, "Session not found")
+    check_class_access(db, user, session.class_id)
+    total = db.scalar(select(func.count(Student.id)).join(ClassEnrollment).where(
+        ClassEnrollment.class_id == session.class_id, Student.deleted_at.is_(None))) or 0
+    recognizer = build_default_recognizer()
+    if recognizer.distance_metric != "euclidean":
+        return {"ready": 0, "total": total, "engine_ready": False}
+    templates, _ = _gallery(db, session.class_id, recognizer.model_version, 128)
+    return {"ready": len(templates), "total": total, "engine_ready": True}
 
 
 @router.get("/sessions/{session_id}/attendance-stats", response_model=AttendanceStatsRead)
@@ -1133,6 +1156,33 @@ def face_enrollment_engine(_user: User = Depends(require_teacher_or_admin)) -> d
     return {"available": recognizer.supports_pose, "engine": recognizer.model_name}
 
 
+@router.post("/students/{student_id}/face-enrollment/start")
+def start_face_enrollment(student_id: int, user: User = Depends(require_teacher_or_admin),
+                          db: Session = Depends(get_db)) -> dict[str, str]:
+    student = db.get(Student, student_id)
+    if student is None or student.deleted_at is not None:
+        raise HTTPException(404, "Không tìm thấy sinh viên")
+    if student.consent_status != ConsentStatus.GRANTED.value:
+        raise HTTPException(409, "Sinh viên chưa đồng ý sử dụng Face ID")
+    db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id).delete()
+    enrollment_id = uuid.uuid4().hex
+    # A marker makes an empty session valid and invalidates any earlier session.
+    db.add(FaceEnrollmentDraft(student_id=student_id, enrollment_id=enrollment_id, owner_id=user.id,
+                               pose_label="session", model_name="", model_version="", embedding=b"",
+                               embedding_dim=0, image_bytes=b""))
+    db.commit()
+    return {"enrollment_id": enrollment_id}
+
+
+@router.delete("/students/{student_id}/face-enrollment/draft", status_code=status.HTTP_204_NO_CONTENT)
+def cancel_face_enrollment(student_id: int, enrollment_id: str,
+                           user: User = Depends(require_teacher_or_admin), db: Session = Depends(get_db)) -> Response:
+    db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id,
+        FaceEnrollmentDraft.enrollment_id == enrollment_id, FaceEnrollmentDraft.owner_id == user.id).delete()
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.post("/students/{student_id}/face-enrollment/reset", status_code=status.HTTP_204_NO_CONTENT)
 def reset_face_enrollment(
     student_id: int,
@@ -1146,6 +1196,7 @@ def reset_face_enrollment(
         FaceTemplate.student_id == student_id,
         FaceTemplate.is_active.is_(True),
     ).update({"is_active": False})
+    db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id).delete()
     write_audit(
         db,
         actor_user_id=user.id,
@@ -1175,6 +1226,13 @@ def scan_face_enrollment(
     if student.consent_status != ConsentStatus.GRANTED.value:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Sinh viên chưa đồng ý sử dụng Face ID")
 
+    if payload.enrollment_id:
+        marker = db.scalar(select(FaceEnrollmentDraft).where(
+            FaceEnrollmentDraft.student_id == student_id, FaceEnrollmentDraft.pose_label == "session",
+            FaceEnrollmentDraft.enrollment_id == payload.enrollment_id, FaceEnrollmentDraft.owner_id == _user.id))
+        if marker is None:
+            raise HTTPException(409, "Lượt đăng ký đã hết hiệu lực. Vui lòng bắt đầu lại.")
+
     recognizer = build_default_recognizer()
     if not recognizer.supports_pose:
         raise HTTPException(
@@ -1195,7 +1253,16 @@ def scan_face_enrollment(
         classify_enrollment_pose(result.pose, payload.target_pose, payload.neutral_pitch)
         if result.pose else None
     )
-    captured, missing = _enrollment_progress(db, student_id, recognizer.model_version)
+    if payload.enrollment_id:
+        drafts = db.scalars(select(FaceEnrollmentDraft).where(
+            FaceEnrollmentDraft.student_id == student_id, FaceEnrollmentDraft.enrollment_id == payload.enrollment_id,
+            FaceEnrollmentDraft.pose_label.in_(ENROLLMENT_POSES))).all()
+        if any(item.model_version != recognizer.model_version for item in drafts):
+            raise HTTPException(409, "Cấu hình Face ID đã thay đổi. Vui lòng bắt đầu lại.")
+        captured = [pose for pose in ENROLLMENT_POSES if any(item.pose_label == pose for item in drafts)]
+        missing = [pose for pose in ENROLLMENT_POSES if pose not in captured]
+    else:
+        captured, missing = _enrollment_progress(db, student_id, recognizer.model_version)
     base_response = {
         "detected_pose": detected,
         "target_pose": payload.target_pose,
@@ -1221,6 +1288,41 @@ def scan_face_enrollment(
             message=f"Đang thấy góc {names.get(detected, detected)}; hãy giữ đúng hướng yêu cầu",
             **base_response,
         )
+
+    if payload.enrollment_id:
+        if payload.target_pose not in captured:
+            db.add(FaceEnrollmentDraft(student_id=student_id, enrollment_id=payload.enrollment_id,
+                owner_id=_user.id, pose_label=payload.target_pose, model_name=recognizer.model_name,
+                model_version=recognizer.model_version, embedding=result.embedding.astype("float32").tobytes(),
+                embedding_dim=int(result.embedding.shape[0]), image_bytes=image_bytes, quality_score=result.quality_score))
+            db.flush()
+        drafts = db.scalars(select(FaceEnrollmentDraft).where(
+            FaceEnrollmentDraft.student_id == student_id, FaceEnrollmentDraft.enrollment_id == payload.enrollment_id,
+            FaceEnrollmentDraft.pose_label.in_(ENROLLMENT_POSES))).all()
+        captured = [pose for pose in ENROLLMENT_POSES if any(item.pose_label == pose for item in drafts)]
+        missing = [pose for pose in ENROLLMENT_POSES if pose not in captured]
+        if not missing:
+            # Switch the entire set in one transaction; attendance never sees a partial set.
+            from ai_pipeline.recognition import EmbeddingResult
+            import numpy as np
+
+            db.query(FaceTemplate).filter(FaceTemplate.student_id == student_id,
+                                          FaceTemplate.is_active.is_(True)).update({"is_active": False})
+            for draft in drafts:
+                vector = np.frombuffer(draft.embedding, dtype=np.float32)
+                if vector.shape != (draft.embedding_dim,) or not np.isfinite(vector).all():
+                    raise HTTPException(409, "Mẫu khuôn mặt không hợp lệ. Vui lòng bắt đầu lại.")
+                register_face_bytes(db, student_id=student_id, image_bytes=draft.image_bytes,
+                    filename=f"faceid-{draft.pose_label}-{uuid.uuid4()}.jpg", recognizer=recognizer,
+                    pose_label=draft.pose_label,
+                    extracted_result=EmbeddingResult(True, vector, draft.quality_score), commit=False)
+            db.query(FaceEnrollmentDraft).filter(FaceEnrollmentDraft.student_id == student_id,
+                                                  FaceEnrollmentDraft.enrollment_id == payload.enrollment_id).delete()
+        db.commit()
+        return FaceEnrollmentProgress(accepted=True, message="Đã ghi nhận góc khuôn mặt", detected_pose=detected,
+            target_pose=payload.target_pose, yaw=result.pose.yaw if result.pose else None,
+            pitch=result.pose.pitch if result.pose else None, captured_poses=captured, missing_poses=missing,
+            progress_percent=len(captured) * 20, completed=not missing, engine=recognizer.model_name)
 
     existing = db.scalar(
         select(FaceTemplate).where(

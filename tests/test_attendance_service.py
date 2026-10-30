@@ -432,6 +432,38 @@ def add_pose_templates(db, student, version="test-model", poses=("front", "left"
     db.commit()
 
 
+def test_policy_offset_is_normalized_to_utc_and_lateness_is_unchanged_on_roundtrip(api_context):
+    from datetime import datetime, timezone
+    from backend.app.services.attendance import calculate_late_minutes
+    client, db, _, _, _, session, _, _ = api_context
+    url = f"/sessions/{session.id}/policy"
+    response = client.put(url, json={"expected_start_time": "2026-10-31T07:00:00+07:00", "late_grace_minutes": 5})
+    assert response.status_code == 200
+    db.expire_all()
+    stored = db.get(type(session), session.id)
+    assert stored.expected_start_time.replace(tzinfo=timezone.utc) == datetime(2026, 10, 31, 0, tzinfo=timezone.utc)
+    assert calculate_late_minutes(stored, datetime(2026, 10, 31, 0, 6, tzinfo=timezone.utc)) == 1
+    open_session_response = client.get("/attendance-requests/open").json()[0]
+    assert open_session_response["expected_start_time"].endswith("Z")
+    response = client.put(url, json={"expected_start_time": open_session_response["expected_start_time"], "late_grace_minutes": 5})
+    assert response.status_code == 200
+    db.expire_all()
+    assert db.get(type(session), session.id).expected_start_time.replace(tzinfo=timezone.utc) == datetime(2026, 10, 31, 0, tzinfo=timezone.utc)
+
+
+def test_face_readiness_uses_enrolled_consented_students_and_current_model(api_context):
+    client, db, _, student, _, session, _, _ = api_context
+    url = f"/sessions/{session.id}/face-readiness"
+    assert client.get(url).json() == {"ready": 0, "total": 1, "engine_ready": True}
+    add_pose_templates(db, student, version="old-model")
+    assert client.get(url).json()["ready"] == 0
+    add_pose_templates(db, student)
+    assert client.get(url).json()["ready"] == 1
+    student.consent_status = ConsentStatus.REVOKED.value
+    db.commit()
+    assert client.get(url).json()["ready"] == 0
+
+
 def test_camera_routes_require_camera_token(api_context):
     client, _, _, _, _, session, _, _ = api_context
     assert client.get("/camera/pipeline").status_code == 422
@@ -498,6 +530,72 @@ def test_enrollment_rejection_does_not_capture_a_pose(api_context):
     result = response.json()
     assert not result["accepted"] and result["captured_poses"] == [] and not result["completed"]
     assert db.scalar(select(FaceTemplate)) is None
+
+
+def test_reenrollment_keeps_previous_templates_until_five_new_poses_are_saved(api_context, monkeypatch, tmp_path):
+    from ai_pipeline.recognition import PoseResult
+    from backend.app.models import FaceEnrollmentDraft
+    from backend.app.config import Settings
+
+    client, db, _, student, _, _, _, recognizer = api_context
+    monkeypatch.setattr("backend.app.services.face_templates.get_settings", lambda: Settings(_env_file=None, storage_dir=tmp_path))
+    monkeypatch.setattr("backend.app.services.face_templates.normalize_portrait_4x6", lambda image, _recognizer: image)
+    add_pose_templates(db, student)
+    old_ids = {item.id for item in db.scalars(select(FaceTemplate).where(FaceTemplate.is_active.is_(True))).all()}
+    start_url = f"/students/{student.id}/face-enrollment/start"
+    scan_url = f"/students/{student.id}/face-enrollment/scan"
+    first_id = client.post(start_url).json()["enrollment_id"]
+    new_id = client.post(start_url).json()["enrollment_id"]
+    body = {"image_base64": base64.b64encode(b"fake-image").decode(), "target_pose": "front", "enrollment_id": first_id}
+    assert client.post(scan_url, json=body).status_code == 409
+    body["enrollment_id"] = new_id
+    for index, pose in enumerate(("front", "left", "right", "up", "down")):
+        recognizer.result = EmbeddingResult(True, np.full(128, index + 1, np.float32),
+                                            pose=PoseResult(pose, 0, 0), face_box=(10, 20, 90, 100))
+        body["target_pose"] = pose
+        if index == 4:
+            from backend.app import api
+            original_register = api.register_face_bytes
+            calls = []
+            def fail_during_switch(*args, **kwargs):
+                calls.append(True)
+                if len(calls) == 2:
+                    raise RuntimeError("simulated storage failure")
+                return original_register(*args, **kwargs)
+            monkeypatch.setattr(api, "register_face_bytes", fail_during_switch)
+            with pytest.raises(RuntimeError, match="simulated storage failure"):
+                client.post(scan_url, json=body)
+            db.rollback()
+            assert {item.id for item in db.scalars(select(FaceTemplate).where(FaceTemplate.is_active.is_(True))).all()} == old_ids
+            monkeypatch.setattr(api, "register_face_bytes", original_register)
+        response = client.post(scan_url, json=body)
+        assert response.status_code == 200
+        assert response.json()["captured_poses"] == ["front", "left", "right", "up", "down"][:index + 1]
+        active = db.scalars(select(FaceTemplate).where(FaceTemplate.is_active.is_(True))).all()
+        if index < 4:
+            assert {item.id for item in active} == old_ids
+        else:
+            assert len(active) == 5 and not ({item.id for item in active} & old_ids)
+            assert {item.pose_label for item in active} == {"front", "left", "right", "up", "down"}
+    assert db.scalars(select(FaceEnrollmentDraft)).all() == []
+    assert client.post(scan_url, json=body).status_code == 409
+
+
+def test_cancelling_reenrollment_preserves_active_faces_and_discards_draft(api_context):
+    from ai_pipeline.recognition import PoseResult
+    from backend.app.models import FaceEnrollmentDraft
+
+    client, db, _, student, _, _, _, recognizer = api_context
+    add_pose_templates(db, student)
+    old_ids = {item.id for item in db.scalars(select(FaceTemplate).where(FaceTemplate.is_active.is_(True))).all()}
+    enrollment_id = client.post(f"/students/{student.id}/face-enrollment/start").json()["enrollment_id"]
+    recognizer.result = EmbeddingResult(True, np.ones(128, np.float32), pose=PoseResult("front", 0, 0))
+    body = {"image_base64": base64.b64encode(b"frame").decode(), "target_pose": "front", "enrollment_id": enrollment_id}
+    assert client.post(f"/students/{student.id}/face-enrollment/scan", json=body).status_code == 200
+    assert client.delete(f"/students/{student.id}/face-enrollment/draft", params={"enrollment_id": enrollment_id}).status_code == 204
+    assert db.scalars(select(FaceEnrollmentDraft)).all() == []
+    assert {item.id for item in db.scalars(select(FaceTemplate).where(FaceTemplate.is_active.is_(True))).all()} == old_ids
+    assert client.post(f"/students/{student.id}/face-enrollment/scan", json=body).status_code == 409
 
 
 def test_mixed_preprocessing_versions_cannot_complete_enrollment_or_reach_worker(api_context):

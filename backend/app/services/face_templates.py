@@ -89,6 +89,7 @@ def register_face_bytes(
     recognizer,
     pose_label: str | None = None,
     extracted_result=None,
+    commit: bool = True,
 ) -> FaceTemplate:
     student = db.get(Student, student_id)
     if student is None:
@@ -119,8 +120,11 @@ def register_face_bytes(
         is_active=True,
     )
     db.add(template)
-    db.commit()
-    db.refresh(template)
+    if commit:
+        db.commit()
+        db.refresh(template)
+    else:
+        db.flush()
     return template
 
 

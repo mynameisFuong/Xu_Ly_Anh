@@ -1,3 +1,7 @@
+> **Lịch sử quyết định:** các mục bên dưới có thể mô tả chức năng đã thay đổi
+> hoặc đã gỡ. Không dùng nội dung lịch sử làm mô tả runtime. Xem
+> [SYSTEM.md](SYSTEM.md) và [API.md](API.md) cho phiên bản hiện hành.
+
 # Cập nhật ngày 30/10/2026: bỏ liveness, tập trung preprocessing
 
 Liveness/PAD, model loader, thử thách web, schema và công cụ huấn luyện PAD đã

@@ -1,3 +1,8 @@
+> **Đặc tả gốc, không phải mô tả phiên bản hiện hành.** Tài liệu này ban đầu
+> mô tả chấm công nhân viên và liveness; sản phẩm hiện là demo điểm danh sinh viên
+> và đã gỡ liveness. Xem [mô tả hệ thống hiện hành](docs/SYSTEM.md). Các chỉ dẫn
+> milestone, công nghệ và yêu cầu lịch sử bên dưới không tự thay đổi runtime.
+
 # Đặc tả xây dựng hệ thống điểm danh bằng FaceID
 
 > Tài liệu này dành cho AI agent. Hãy đọc toàn bộ trước khi viết code, làm theo thứ tự milestone ở mục 14, và chỉ chuyển milestone khi đã đạt đủ tiêu chí nghiệm thu của milestone trước.
