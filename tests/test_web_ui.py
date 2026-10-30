@@ -119,13 +119,16 @@ def test_web_explains_disabled_backend_configuration(browser_page):
 
 def test_web_only_shows_identity_after_server_reports_passed_and_recorded(browser_page):
     page, expect = browser_page
-    serve_ui(page, passed=True)
+    scans = serve_ui(page, passed=True)
     expect(page.locator("#activeSession")).to_have_value("1")
     page.locator("#scanToggle").click()
-    expect(page.locator("#livenessTitle")).to_have_text("Đã xác minh người thật")
-    expect(page.locator("#scanFaceName")).to_have_text("Synthetic Test")
+    expect(page.locator("#livenessTitle")).to_have_text("Đã ghi nhận điểm danh")
+    expect(page.locator("#livenessHint")).to_contain_text("TEST001 · Synthetic Test")
+    expect(page.locator("#scanToggle")).to_have_text("Quét người tiếp theo")
+    expect(page.locator("#scanFaceBox")).to_be_hidden()
     expect(page.locator("#scanLog")).to_contain_text("TEST001")
-    page.locator("#scanToggle").click()
+    page.wait_for_timeout(1600)  # More than two scan intervals after completion.
+    assert len(scans) == 1
 
 
 def test_web_does_not_show_success_for_unsaved_attendance(browser_page):
