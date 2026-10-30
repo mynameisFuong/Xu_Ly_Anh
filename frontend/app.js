@@ -451,6 +451,7 @@
   }
 
   let faceStudents = [],
+    faceClasses = [],
     faceStream = null,
     faceUrl = null;
   const poses = [
@@ -474,6 +475,7 @@
   let enrollTimer = null;
   let enrollBusy = false;
   let neutralPitch = null;
+  let neutralYaw = null;
   let enrollEpoch = 0;
   let enrollReadyAt = 0;
   let enrollStarting = false;
@@ -589,6 +591,7 @@
     enrollmentId = null;
     enrollStudentId = null;
     neutralPitch = null;
+    neutralYaw = null;
     $("captureFace").textContent = "Bắt đầu quét 5 góc";
     $("faceStudent").disabled = false;
     $("enrollmentCamera").classList.remove("is-scanning");
@@ -613,6 +616,7 @@
           image_base64: canvas.toDataURL("image/jpeg", 0.88),
           target_pose: poses[poseIndex].id,
           neutral_pitch: neutralPitch,
+          neutral_yaw: neutralYaw,
           enrollment_id: enrollmentId,
         },
       );
@@ -620,15 +624,17 @@
       if (result.accepted) {
         if (poses[poseIndex].id === "front" && Number.isFinite(result.pitch))
           neutralPitch = result.pitch;
+        if (poses[poseIndex].id === "front" && Number.isFinite(result.yaw))
+          neutralYaw = result.yaw;
         enrollmentAudio.captured();
         enrollIndex = result.captured_poses.length;
         renderEnrollment(
-          result.completed ? "Face ID đã sẵn sàng để điểm danh." : null,
+          result.completed ? "Đã lưu đủ 5 góc. Kiểm tra lớp học đã ghi danh bên dưới trước khi điểm danh." : null,
         );
         if (result.completed) {
           stopEnrollment({ keepCompletionTone: true });
           await reloadFaces();
-          notify("Đã hoàn tất đăng ký Face ID 5 góc.");
+          notify("Đã hoàn tất đăng ký Face ID 5 góc. Chỉ điểm danh được ở lớp đã ghi danh.");
         } else {
           enrollReadyAt = performance.now() + 2000;
           enrollmentAudio.scanning(2000);
@@ -637,13 +643,20 @@
         const current = poses[enrollIndex];
         const relativePitch = result.pitch - (neutralPitch ?? 0);
         const needsMoreTilt =
-          current.id === "up" &&
+          (current.id === "up" || current.id === "down") &&
           result.detected_pose === "front" &&
           result.message.startsWith("Đang thấy góc") &&
           Number.isFinite(relativePitch);
+        const needsMoreTurn =
+          (current.id === "left" || current.id === "right") &&
+          result.detected_pose === "front" &&
+          result.message.startsWith("Đang thấy góc") &&
+          Number.isFinite(result.yaw);
         renderEnrollment(
           needsMoreTilt
-            ? "Ngẩng cằm thêm một chút, mắt vẫn nhìn vào camera và giữ yên."
+            ? `${current.id === "up" ? "Ngẩng" : "Cúi"} cằm thêm một chút, mắt vẫn nhìn vào camera và giữ yên.`
+            : needsMoreTurn
+              ? `Quay đầu sang ${current.id === "left" ? "trái" : "phải"} thêm một chút rồi giữ yên.`
             : result.message,
         );
       }
@@ -668,7 +681,7 @@
       ? items
           .map(
             (item) =>
-              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_label || "—")}</td><td>${badge(item.consent_status)}</td><td>${item.enrollment_complete ? '<span class="badge present">Hoàn tất</span>' : `${item.captured_pose_count}/5 góc`}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
+              `<tr><td class="name-cell"><strong>${esc(item.student_code)}</strong><small>${esc(item.full_name)}</small></td><td>${esc(item.class_codes?.join(", ") || "Chưa ghi danh")}</td><td>${badge(item.consent_status)}</td><td>${item.enrollment_complete ? '<span class="badge present">Hoàn tất</span>' : `${item.captured_pose_count}/5 góc`}</td><td>${item.latest_image_url ? `<button class="btn secondary small" data-preview="${item.id}">Xem ảnh</button>` : '<span class="muted">Chưa có ảnh</span>'}</td></tr>`,
           )
           .join("")
       : emptyRow(5, "Không tìm thấy sinh viên phù hợp.");
@@ -687,6 +700,22 @@
         .join("");
     $("faceStudent").value = selected;
     renderFaces();
+    renderFaceClassStatus();
+  }
+  function renderFaceClassStatus() {
+    const student = faceStudents.find((item) => item.id === Number($("faceStudent").value));
+    const class_ = faceClasses.find((item) => item.id === Number($("faceClass").value));
+    const status = $("faceClassStatus");
+    if (!student) {
+      status.textContent = "Chọn sinh viên để xem lớp học đã ghi danh.";
+    } else if (!student.class_codes?.length) {
+      status.textContent = "Sinh viên chưa ghi danh vào lớp học nào; Face ID sẽ chưa dùng được để điểm danh.";
+    } else if (class_ && !student.class_codes.includes(class_.code)) {
+      status.textContent = `Face ID đã lưu nhưng ${student.student_code} chưa thuộc lớp ${class_.code}. Bấm “Ghi danh vào lớp”.`;
+    } else {
+      status.textContent = `Đã ghi danh: ${student.class_codes.join(", ")}. Chọn đúng buổi của lớp này khi điểm danh.`;
+    }
+    $("addFaceClass").disabled = !student || !class_ || Boolean(student.class_codes?.includes(class_.code));
   }
   async function openCamera(videoId) {
     if (!navigator.mediaDevices?.getUserMedia)
@@ -709,7 +738,13 @@
     return new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.88));
   }
   async function initFaces() {
+    faceClasses = await getClasses();
     await reloadFaces();
+    $("faceClass").innerHTML = '<option value="">Chọn lớp học</option>' +
+      faceClasses.map((item) => `<option value="${item.id}">${esc(item.code)} · ${esc(item.name)}</option>`).join("");
+    const requestedClass = new URLSearchParams(location.search).get("class");
+    const selectedClass = faceClasses.find((item) => item.code === requestedClass);
+    if (selectedClass) $("faceClass").value = String(selectedClass.id);
     const requestedStudent = new URLSearchParams(location.search).get(
       "student",
     );
@@ -720,6 +755,17 @@
       } else if (!student) notify("Không tìm thấy sinh viên được yêu cầu. Vui lòng kiểm tra danh sách.", "warn");
       else $("faceStudent").value = requestedStudent;
     }
+    renderFaceClassStatus();
+    $("faceStudent").addEventListener("change", renderFaceClassStatus);
+    $("faceClass").addEventListener("change", renderFaceClassStatus);
+    $("addFaceClass").addEventListener("click", run(async () => {
+      const studentId = Number($("faceStudent").value);
+      const classId = Number($("faceClass").value);
+      if (!studentId || !classId) return;
+      await api(`/classes/${classId}/enrollments/${studentId}`, { method: "POST" });
+      await reloadFaces();
+      notify("Đã ghi danh vào lớp. Kiểm tra trạng thái Face ID trước khi điểm danh.");
+    }));
     $("faceSearch").addEventListener("input", renderFaces);
     $("faceCamera").addEventListener(
       "click",
@@ -770,6 +816,7 @@
           enrollIndex = 0;
           enrollReadyAt = 0;
           neutralPitch = null;
+          neutralYaw = null;
           $("faceStudent").disabled = true;
           $("captureFace").textContent = "Dừng quét";
           renderEnrollment();
@@ -1082,10 +1129,10 @@
       if (!result.engine_ready) {
         hint.textContent = "Engine Face ID chưa sẵn sàng. Vẫn có thể điểm danh thủ công.";
       } else if (result.ready < result.total) {
-        hint.replaceChildren(document.createTextNode(`${result.ready}/${result.total} sinh viên có Face ID hợp lệ. `));
+        hint.replaceChildren(document.createTextNode(`Lớp ${activeSession.class_code}: ${result.ready}/${result.total} sinh viên có Face ID hợp lệ. Face ID chỉ nhận sinh viên đã ghi danh đúng lớp. `));
         const link = document.createElement("a");
-        link.href = "/demo/faces";
-        link.textContent = "Kiểm tra đăng ký khuôn mặt";
+        link.href = `/demo/faces?class=${encodeURIComponent(activeSession.class_code)}`;
+        link.textContent = "Kiểm tra Face ID và ghi danh vào lớp";
         hint.append(link, document.createTextNode("; vẫn có thể điểm danh thủ công."));
       } else {
         hint.textContent = result.total ? `Đã sẵn sàng: ${result.ready}/${result.total} sinh viên có Face ID hợp lệ.` : "Lớp chưa có sinh viên được ghi danh.";

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     attendance_window_seconds: int = Field(default=4, ge=1, le=60)
     face_distance_threshold: float = 0.52
     face_distance_margin: float = 0.04
-    enrollment_num_jitters: int = 3
+    enrollment_num_jitters: int = Field(default=1, ge=1, le=20)
     stream_max_faces_per_frame: int = Field(default=8, ge=1, le=32)
     stream_confirmation_window_seconds: int = Field(default=30, ge=4, le=120)
     stream_min_observation_interval_seconds: float = Field(default=0.25, ge=0.1, le=5)

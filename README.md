@@ -58,7 +58,9 @@ nhưng API điểm danh bằng Face ID và đăng ký năm góc không dùng his
    xem trước; chọn lớp ghi danh và trạng thái đồng ý.
 2. **Khuôn mặt:** chọn sinh viên đã đồng ý, quét lần lượt chính diện, trái, phải,
    lên, xuống. Tít ngắn là đang chờ; tít dài là góc đã nhận. Bộ mẫu cũ tiếp tục
-   hoạt động nếu quét lại chưa hoàn tất.
+   hoạt động nếu quét lại chưa hoàn tất. Face ID chỉ được dùng trong buổi điểm danh
+   của lớp học mà sinh viên đã ghi danh. Màn hình Khuôn mặt hiển thị các lớp này và
+   cho phép ghi danh thêm vào đúng lớp mà không cần quét lại.
 3. **Buổi học:** chọn một buổi đang mở hoặc tạo buổi mới. Trong **Điểm danh**,
    xem cảnh báo số sinh viên đã có Face ID, bật camera và bắt đầu quét một lần.
    Vàng là đang chờ; xanh kèm tên là đã lưu. Người khác có thể tiếp tục vào khung.

@@ -39,6 +39,14 @@
                   <option value="">Chọn sinh viên</option>
                 </select>
               </div>
+              <div class="field">
+                <label for="faceClass">Lớp dùng để điểm danh</label>
+                <div class="actions">
+                  <select id="faceClass"><option value="">Chọn lớp học</option></select>
+                  <button id="addFaceClass" class="btn secondary" type="button">Ghi danh vào lớp</button>
+                </div>
+                <small id="faceClassStatus" class="hint" role="status">Chọn sinh viên để xem lớp học đã ghi danh.</small>
+              </div>
               <div class="camera-box enrollment-camera" id="enrollmentCamera">
                 <video id="faceVideo" autoplay muted playsinline></video>
                 <div class="face-guide" aria-hidden="true">
@@ -123,7 +131,7 @@
                 <thead>
                   <tr>
                     <th>Sinh viên</th>
-                    <th>Lớp</th>
+                    <th>Lớp điểm danh</th>
                     <th>Đồng ý</th>
                     <th>Face ID</th>
                     <th>Ảnh gần nhất</th>

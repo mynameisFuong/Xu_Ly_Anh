@@ -510,6 +510,10 @@ def list_students_with_faces(
     students = db.scalars(select(Student).where(Student.deleted_at.is_(None)).order_by(Student.student_code)).all()
     summaries: list[StudentFaceSummary] = []
     for student in students:
+        class_codes = list(db.scalars(
+            select(Class.code).join(ClassEnrollment, ClassEnrollment.class_id == Class.id)
+            .where(ClassEnrollment.student_id == student.id).order_by(Class.code)
+        ).all())
         templates = db.scalars(
             select(FaceTemplate)
             .where(FaceTemplate.student_id == student.id, FaceTemplate.is_active.is_(True))
@@ -527,6 +531,7 @@ def list_students_with_faces(
                 student_code=student.student_code,
                 full_name=student.full_name,
                 class_label=student.class_label,
+                class_codes=class_codes,
                 consent_status=student.consent_status,
                 face_template_count=len(templates),
                 captured_pose_count=len(captured_poses),
@@ -1250,7 +1255,7 @@ def scan_face_enrollment(
         num_jitters=get_settings().enrollment_num_jitters,
     )
     detected = (
-        classify_enrollment_pose(result.pose, payload.target_pose, payload.neutral_pitch)
+        classify_enrollment_pose(result.pose, payload.target_pose, payload.neutral_pitch, payload.neutral_yaw)
         if result.pose else None
     )
     if payload.enrollment_id:

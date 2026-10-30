@@ -151,7 +151,8 @@ def test_readiness_warning_and_camera_controls_do_not_stop_manual_attendance(bro
     page, expect = browser_page
     serve_ui(page, readiness={"ready": 0, "total": 5, "engine_ready": True})
     expect(page.locator("#faceReadiness")).to_contain_text("0/5 sinh viên có Face ID hợp lệ")
-    expect(page.locator("#faceReadiness a")).to_have_attribute("href", "/demo/faces")
+    expect(page.locator("#faceReadiness a")).to_have_attribute("href", "/demo/faces?class=TEST01")
+    expect(page.locator("#faceReadiness")).to_contain_text("ghi danh đúng lớp")
     start_scan(page)
     expect(page.locator("#scanCamera")).to_have_text("Tắt camera")
     page.locator("#scanToggle").click()
@@ -420,7 +421,8 @@ def test_changed_live_face_cannot_keep_the_previous_person_green_while_model_is_
 
 def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True, consent="granted"):
     root = Path(__file__).resolve().parents[1] / "frontend"
-    state = {"accept": accept, "scans": [], "captured": [], "pending": [], "resets": 0}
+    state = {"accept": accept, "scans": [], "captured": [], "pending": [], "resets": 0,
+             "class_codes": []}
     if audio:
         page.add_init_script("""
           window.testBeeps = [];
@@ -457,9 +459,14 @@ def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True,
             route.fulfill(path=str(root / name), content_type="text/javascript" if name.endswith(".js") else "text/css")
             return
         if path == "/classes":
-            body = []
+            body = [{"id": 1, "code": "TEST01", "name": "Test Class"}]
+        elif path == "/classes/1/enrollments/1" and route.request.method == "POST":
+            state["class_codes"] = ["TEST01"]
+            route.fulfill(status=204)
+            return
         elif path == "/admin/students/faces":
             body = [{"id": 1, "student_code": "TEST001", "full_name": "Synthetic Test", "consent_status": consent,
+                     "class_codes": state["class_codes"].copy(),
                      "face_template_count": len(state["captured"]), "captured_pose_count": len(state["captured"]),
                      "enrollment_complete": len(state["captured"]) == 5}]
         elif path == "/face-enrollment/engine":
@@ -484,7 +491,7 @@ def serve_enrollment(page, *, accept=False, defer=False, fail=False, audio=True,
             if state["accept"] and target not in state["captured"]:
                 state["captured"].append(target)
             body = {"accepted": state["accept"], "completed": len(state["captured"]) == 5,
-                    "captured_poses": state["captured"].copy(), "pitch": 0,
+                    "captured_poses": state["captured"].copy(), "pitch": 0, "yaw": 0,
                     "detected_pose": target, "message": "Đã ghi nhận góc khuôn mặt" if state["accept"] else "Hãy giữ đúng góc"}
         else:
             route.fulfill(status=404, json={"detail": "Unexpected test route: " + path})
@@ -511,6 +518,18 @@ def test_unconsented_student_link_explains_next_step(browser_page):
     expect(page.locator("#faceStudent")).to_have_value("")
 
 
+def test_face_page_explains_class_scope_and_can_enroll_existing_faceid(browser_page):
+    page, expect = browser_page
+    state = serve_enrollment(page)
+    expect(page.locator("#faceClassStatus")).to_contain_text("chưa ghi danh")
+    page.locator("#faceClass").select_option("1")
+    expect(page.locator("#faceClassStatus")).to_contain_text("chưa ghi danh")
+    page.locator("#addFaceClass").click()
+    expect(page.locator("#faceClassStatus")).to_contain_text("TEST01")
+    expect(page.locator("#addFaceClass")).to_be_disabled()
+    assert state["class_codes"] == ["TEST01"]
+
+
 def test_enrollment_repeats_short_beeps_and_stops_them_when_paused(browser_page):
     page, expect = browser_page
     state = serve_enrollment(page)
@@ -532,6 +551,8 @@ def test_enrollment_emits_one_long_beep_for_each_saved_angle_and_finishes_silent
     expect(page.locator("#cameraStep")).to_have_text("Hoàn tất", timeout=20000)
     expect(page.locator("#notice")).to_contain_text("Đã hoàn tất đăng ký Face ID")
     assert [item["target_pose"] for item in state["scans"]] == ["front", "left", "right", "up", "down"]
+    assert state["scans"][0]["neutral_yaw"] is None
+    assert all(item["neutral_yaw"] == 0 for item in state["scans"][1:])
     beeps = page.evaluate("window.testBeeps")
     long_beeps = [beep for beep in beeps if beep.get("duration", 0) > 0.5]
     assert len(long_beeps) == 5

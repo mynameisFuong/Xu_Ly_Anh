@@ -50,11 +50,12 @@ class MatchResult:
     decision: str
 
 
-def classify_pose(yaw: float, pitch: float, *, pitch_threshold: float = 12) -> str:
+def classify_pose(yaw: float, pitch: float, *, pitch_threshold: float = 12,
+                  yaw_threshold: float = 18) -> str:
     """Map head angles to the five guided enrollment poses."""
-    if yaw <= -18:
+    if yaw <= -yaw_threshold:
         return "left"
-    if yaw >= 18:
+    if yaw >= yaw_threshold:
         return "right"
     if pitch <= -pitch_threshold:
         return "up"
@@ -63,12 +64,19 @@ def classify_pose(yaw: float, pitch: float, *, pitch_threshold: float = 12) -> s
     return "front"
 
 
-def classify_enrollment_pose(pose: PoseResult, target_pose: str, neutral_pitch: float | None) -> str:
-    """Use the accepted front frame as the vertical reference for later poses."""
-    if neutral_pitch is None or target_pose == "front":
+def classify_enrollment_pose(pose: PoseResult, target_pose: str, neutral_pitch: float | None,
+                             neutral_yaw: float | None = None) -> str:
+    """Classify guided poses relative to the first accepted front frame."""
+    if target_pose == "front":
+        # A mildly off-axis camera should still allow an initial reference frame.
+        return "front" if abs(pose.yaw) <= 23 and abs(pose.pitch) <= 16 else pose.label
+    if neutral_pitch is None:
         return pose.label
-    relative_pitch = pose.pitch - max(-12.0, min(12.0, neutral_pitch))
-    return classify_pose(pose.yaw, relative_pitch, pitch_threshold=8)
+    relative_pitch = pose.pitch - max(-16.0, min(16.0, neutral_pitch))
+    if neutral_yaw is None:
+        return classify_pose(pose.yaw, relative_pitch, pitch_threshold=8)
+    relative_yaw = pose.yaw - max(-23.0, min(23.0, neutral_yaw))
+    return classify_pose(relative_yaw, relative_pitch, pitch_threshold=7, yaw_threshold=14)
 
 
 def _center(points: list[tuple[int, int]]) -> tuple[float, float]:

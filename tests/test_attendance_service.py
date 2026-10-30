@@ -464,6 +464,25 @@ def test_face_readiness_uses_enrolled_consented_students_and_current_model(api_c
     assert client.get(url).json()["ready"] == 0
 
 
+def test_faceid_requires_class_enrollment_even_when_student_has_all_five_poses(api_context):
+    client, db, teacher, student, _, _, _, _ = api_context
+    other_class = Class(code="OTHER", name="Other Class", teacher_id=teacher.id)
+    db.add(other_class)
+    db.commit()
+    other_session = open_session(db, class_id=other_class.id, opened_by=teacher.id)
+    add_pose_templates(db, student)
+    assert client.get(f"/sessions/{other_session.id}/face-readiness").json() == {
+        "ready": 0, "total": 0, "engine_ready": True,
+    }
+    summary = list_students_with_faces(teacher, db)[0].model_dump()
+    assert summary["enrollment_complete"] is True
+    assert summary["class_codes"] == ["C001"]
+    assert client.post(f"/classes/{other_class.id}/enrollments/{student.id}").status_code == 204
+    assert client.get(f"/sessions/{other_session.id}/face-readiness").json() == {
+        "ready": 1, "total": 1, "engine_ready": True,
+    }
+
+
 def test_camera_routes_require_camera_token(api_context):
     client, _, _, _, _, session, _, _ = api_context
     assert client.get("/camera/pipeline").status_code == 422

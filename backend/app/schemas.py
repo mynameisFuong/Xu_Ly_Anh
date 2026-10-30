@@ -81,6 +81,7 @@ class StudentFaceSummary(BaseModel):
     student_code: str
     full_name: str
     class_label: str | None
+    class_codes: list[str] = Field(default_factory=list)
     consent_status: str
     face_template_count: int
     captured_pose_count: int = 0
@@ -336,6 +337,7 @@ class FaceEnrollmentScanRequest(BaseModel):
     image_base64: str = Field(max_length=2_800_000)
     target_pose: str
     neutral_pitch: float | None = None
+    neutral_yaw: float | None = None
     enrollment_id: str | None = Field(default=None, min_length=32, max_length=32)
 
 

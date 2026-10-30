@@ -20,6 +20,16 @@ def test_relative_pitch_accepts_a_gentle_tilt_from_front_position():
     assert classify_enrollment_pose(PoseResult("front", 0, 9), "front", front_pitch) == "front"
 
 
+def test_guided_enrollment_uses_front_frame_as_yaw_and_pitch_reference():
+    assert classify_enrollment_pose(PoseResult("right", 21, 13), "front", None) == "front"
+    assert classify_enrollment_pose(PoseResult("front", 7, 13), "left", 13, 21) == "left"
+    assert classify_enrollment_pose(PoseResult("right", 35, 13), "right", 13, 21) == "right"
+    assert classify_enrollment_pose(PoseResult("front", 21, 6), "up", 13, 21) == "up"
+    assert classify_enrollment_pose(PoseResult("down", 21, 20), "down", 13, 21) == "down"
+    assert classify_enrollment_pose(PoseResult("front", 20, 13), "left", 13, 21) == "front"
+    assert classify_enrollment_pose(PoseResult("left", -25, 0), "front", None) == "left"
+
+
 def test_detected_face_box_is_returned_even_when_image_quality_is_low():
     class FaceLibrary:
         def face_locations(self, *_args, **_kwargs):

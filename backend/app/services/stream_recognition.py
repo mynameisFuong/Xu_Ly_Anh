@@ -148,7 +148,7 @@ def scan_stream_frame(db, *, session_id, payload, owner, recognizer, save_eviden
                 elif not face.accepted:
                     results.append(StreamFaceResult(decision="unknown", message=localize_reason(face.reason), **base))
                 elif not templates:
-                    results.append(StreamFaceResult(decision="unknown", message="Chưa có mẫu Face ID hợp lệ trong lớp. Vui lòng đăng ký đủ 5 góc trước khi điểm danh", **base))
+                    results.append(StreamFaceResult(decision="unknown", message="Lớp của buổi này chưa có sinh viên nào có Face ID hợp lệ. Kiểm tra ghi danh đúng lớp và đủ 5 góc.", **base))
                 elif match is None or match.student_id is None:
                     results.append(StreamFaceResult(decision="low_confidence", message="Chưa nhận diện được, vui lòng nhìn rõ camera", **base))
                 elif counts[match.student_id] > 1:
